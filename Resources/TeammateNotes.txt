@@ -1,0 +1,42 @@
+Just Show Up!  -  install notes for teammates
+==============================================
+
+Needs: an Apple Silicon Mac (M1 or newer) running macOS 14 or later.
+
+1. If an older copy is running, click its menu bar icon, open the gear
+   menu and choose Quit.
+
+2. Drag "Just Show Up!" into your Applications folder (replace the old one).
+
+3. Open it. macOS will refuse the first time because the app is not from
+   the App Store. To allow it:
+     - Open System Settings > Privacy & Security.
+     - Scroll down to the message about "Just Show Up!" and click
+       "Open Anyway", then confirm.
+   You only do this once per version.
+
+4. Look for the two stars in the menu bar (top right of the screen).
+   The app has no Dock icon or window.
+
+5. First time only: type your name, choose "Join a Team" and enter the
+   team code you were given. If you were already on the team, you are
+   still on it and can skip this.
+
+Permissions (macOS asks the first time you use each feature):
+  - Microphone: allow it when you make or accept your first call.
+  - Screen Recording: needed only to share YOUR screen. Click the share
+    button during a call, choose "Allow Screen Recording...", switch the
+    app on in System Settings, then quit and reopen the app.
+
+If sharing still asks for permission after you allowed it, switch
+"Just Show Up!" off and on again in
+System Settings > Privacy & Security > Screen & System Audio Recording,
+then quit and reopen the app.
+
+How to use it:
+  - Click a teammate's name to call them.
+  - Hold the round button on the right of their row to talk instantly
+    (walkie-talkie). Wait for the short chirp, then speak.
+  - During a call, use the share button to share a screen or one window.
+  - When a teammate shares, drag in the window that opens to draw on
+    their screen.

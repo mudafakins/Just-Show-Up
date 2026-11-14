@@ -52,6 +52,8 @@ final class TeamStore: ObservableObject {
     @Published var teammates: [Teammate] = []
     @Published var teamCode: String?
     @Published var errorMessage: String?
+    /// The "change my name" field is showing in the panel.
+    @Published var isEditingName = false
 
     // Calls
     @Published var call: CallState?

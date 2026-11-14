@@ -153,9 +153,15 @@ private struct TeamList: View {
     var body: some View {
         VStack(spacing: 0) {
             Header()
-            SearchField(text: $search)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
+            if team.isEditingName {
+                RenameBar()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            } else {
+                SearchField(text: $search)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            }
 
             if let incoming = team.incoming {
                 IncomingCallBar(incoming: incoming)
@@ -222,6 +228,7 @@ private struct Header: View {
                 Menu {
                     if let me = team.me {
                         Text("You: \(me.name)")
+                        Button("Change Name…") { team.isEditingName = true }
                         Divider()
                     }
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
@@ -253,6 +260,60 @@ private struct Header: View {
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 10)
+    }
+}
+
+/// Replaces the search field while changing your name.
+private struct RenameBar: View {
+    @EnvironmentObject private var team: TeamStore
+    @AppStorage("displayName") private var savedName = ""
+    @State private var name = ""
+    @State private var isSaving = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField("Your name", text: $name)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($isFocused)
+                .onSubmit(save)
+                .onExitCommand { team.isEditingName = false }
+                .padding(.horizontal, 11)
+                .frame(height: 34)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.8), lineWidth: 2))
+
+            Button("Save", action: save)
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmed.isEmpty || isSaving)
+            Button("Cancel") { team.isEditingName = false }
+                .buttonStyle(.link)
+                .font(.system(size: 11))
+        }
+        .onAppear {
+            name = team.me?.name ?? ""
+            isFocused = true
+        }
+    }
+
+    private func save() {
+        let newName = name.trimmed
+        guard !newName.isEmpty, !isSaving else { return }
+        if newName == team.me?.name {
+            team.isEditingName = false
+            return
+        }
+        isSaving = true
+        Task {
+            await team.rename(to: newName)
+            isSaving = false
+            // Stay open if the server refused, so the error is visible next to the field.
+            if team.me?.name == newName {
+                savedName = newName
+                team.isEditingName = false
+            }
+        }
     }
 }
 
