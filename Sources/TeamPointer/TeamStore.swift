@@ -423,6 +423,25 @@ final class TeamStore: ObservableObject {
         Task { await ring(teammate) }
     }
 
+    /// Online teammates who are not yet in my call or being rung.
+    var teammatesToCall: [Teammate] {
+        teammates.filter { $0.isOnline && !isInCall($0) && !isRinging($0) }
+    }
+
+    /// Rings every online teammate into one call (or the rest of them into the current call).
+    func callEveryone() {
+        let targets = teammatesToCall
+        guard !targets.isEmpty, incoming == nil else { return }
+        Task {
+            // One at a time: the first ring creates the call, the rest join the same one.
+            for (index, teammate) in targets.enumerated() {
+                await ring(teammate)
+                // Couldn't even start the call (no microphone, no connection): stop here.
+                if index == 0, call == nil { return }
+            }
+        }
+    }
+
     private func ring(_ teammate: Teammate) async {
         notice = nil
         errorMessage = nil

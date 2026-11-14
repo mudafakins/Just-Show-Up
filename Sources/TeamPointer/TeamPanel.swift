@@ -187,6 +187,9 @@ private struct TeamList: View {
             VStack(spacing: 0) {
                 if search.trimmed.isEmpty {
                     TeamCodeRow()
+                    if team.teammates.count > 1 {
+                        CallEveryoneRow()
+                    }
                 }
                 ForEach(visibleTeammates) { teammate in
                     TeammateRow(teammate: teammate)
@@ -377,6 +380,46 @@ private struct TeamCodeRow: View {
             }
         }
         .help("Click to copy the code, then send it to a teammate")
+    }
+}
+
+/// Rings the whole team into one call.
+private struct CallEveryoneRow: View {
+    @EnvironmentObject private var team: TeamStore
+    @State private var isHovered = false
+
+    private var count: Int { team.teammatesToCall.count }
+    private var isEnabled: Bool { count > 0 && team.incoming == nil }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "person.3.fill")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color.primary.opacity(0.1)))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(team.call == nil ? "Call Everyone" : "Add Everyone to Call")
+                    .font(.system(size: 15, weight: .medium))
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .rowStyle(isHovered: isHovered && isEnabled)
+        .opacity(isEnabled ? 1 : 0.5)
+        .onHover { isHovered = $0 }
+        .onTapGesture { if isEnabled { team.callEveryone() } }
+        .help("Ring every online teammate into one call")
+    }
+
+    private var subtitle: String {
+        if count == 0 {
+            return team.call == nil ? "Nobody else is online" : "Everyone online is already here"
+        }
+        return count == 1 ? "1 teammate online" : "\(count) teammates online"
     }
 }
 
