@@ -522,8 +522,8 @@ private struct ShareButton: View {
         } else {
             Menu {
                 if !team.hasScreenRecordingPermission {
-                    Button("Allow Screen Recording…") { team.requestScreenRecordingPermission() }
-                    Text("Then quit and reopen the app.")
+                    Button("1. Allow Screen Recording…") { team.requestScreenRecordingPermission() }
+                    Button("2. Restart App (after switching it on)") { team.restartApp() }
                 } else if sources.isEmpty {
                     Text("Loading…")
                 } else {

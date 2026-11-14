@@ -514,6 +514,17 @@ final class TeamStore: ObservableObject {
         CallEngine.requestScreenRecordingPermission()
     }
 
+    /// Quits and reopens the app. macOS only applies a newly granted Screen Recording
+    /// permission at launch, so this saves a trip to the gear menu and Finder.
+    func restartApp() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.arguments = Array(CommandLine.arguments.dropFirst())
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
+    }
+
     func shareSources() async -> [ShareSource] {
         await engine.shareSources()
     }
