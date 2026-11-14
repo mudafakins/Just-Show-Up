@@ -53,7 +53,24 @@ final class CallEngine {
     /// `microphone: false` joins silently (used by the walkie-talkie's listening side).
     func connect(url: String, token: String, microphone: Bool = true) async throws {
         let relay = Relay(engine: self)
-        let room = Room(delegate: relay)
+        let room = Room(delegate: relay, roomOptions: RoomOptions(
+            // Echo cancellation, noise suppression and automatic gain run through macOS's own
+            // voice processing, which also lets each person pick Voice Isolation in Control Center.
+            defaultAudioCaptureOptions: AudioCaptureOptions(
+                echoCancellation: true,
+                autoGainControl: true,
+                noiseSuppression: true,
+                highpassFilter: true
+            ),
+            // 48 kbps is double the SDK's speech default: noticeably clearer voice for little data.
+            // `red` repeats audio packets so short network hiccups don't sound choppy;
+            // `dtx` sends almost nothing during silence.
+            defaultAudioPublishOptions: AudioPublishOptions(
+                encoding: AudioEncoding(maxBitrate: 48_000),
+                dtx: true,
+                red: true
+            )
+        ))
         self.relay = relay
         self.room = room
         try await room.connect(url: url, token: token)
@@ -220,8 +237,13 @@ final class CallEngine {
         sharePublication = try await room.localParticipant.publish(
             videoTrack: track,
             options: VideoPublishOptions(
-                screenShareEncoding: VideoEncoding(maxBitrate: 3_000_000, maxFps: 15),
-                simulcast: false
+                // Up to 6 Mbps keeps small text readable on Retina screens.
+                screenShareEncoding: VideoEncoding(maxBitrate: 6_000_000, maxFps: 15),
+                simulcast: false,
+                // H.264 is encoded by the Mac's video chip: less delay and far less CPU.
+                preferredCodec: .h264,
+                // When bandwidth is tight, drop frames rather than blur the text.
+                degradationPreference: .maintainResolution
             )
         )
 

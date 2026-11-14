@@ -85,6 +85,7 @@ final class TeamStore: ObservableObject {
     /// A second, separate audio line used only for walkie-talkie.
     private let walkie = CallEngine()
     private var walkieIdle: Task<Void, Never>?
+    private var talkLimit: Task<Void, Never>?
 
     init() {
         guard let config = AppConfig.load() else {
@@ -579,9 +580,9 @@ final class TeamStore: ObservableObject {
 
     // MARK: Walkie-talkie
     //
-    // Hold to talk: the first press opens a private audio line to that teammate (about a
-    // second), a short chirp says they can hear you, and the line stays open for a while
-    // so replies are instant. Nobody has to accept anything.
+    // Click to talk, click again to stop: the first click opens a private audio line to that
+    // teammate (about a second), a short chirp says they can hear you, and the line stays
+    // open for a while so replies are instant. Nobody has to accept anything.
 
     /// The private line's room name; both sides derive the same one.
     private func walkieRoom(with peer: UUID) -> String? {
@@ -590,13 +591,31 @@ final class TeamStore: ObservableObject {
         return "\(teamID.uuidString.lowercased()):talk:\(pair[0])-\(pair[1])"
     }
 
-    func setTalking(_ talking: Bool, to teammate: Teammate) {
+    /// Click to start talking to a teammate, click again to stop.
+    func toggleTalking(to teammate: Teammate) {
+        if talkingTo == teammate.id {
+            setTalking(false, to: teammate)
+        } else {
+            stopTalking()
+            setTalking(true, to: teammate)
+        }
+    }
+
+    private func setTalking(_ talking: Bool, to teammate: Teammate) {
         if talking {
             guard teammate.isOnline, call == nil, talkingTo == nil else { return }
             guard let room = walkieRoom(with: teammate.id) else { return }
             talkingTo = teammate.id
             notice = nil
             errorMessage = nil
+            // The microphone stays on until the second click, so cap it in case it's forgotten.
+            talkLimit?.cancel()
+            talkLimit = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(180))
+                guard let self, !Task.isCancelled, self.talkingTo == teammate.id else { return }
+                self.setTalking(false, to: teammate)
+                self.notice = "Walkie-talkie switched off after 3 minutes."
+            }
             Task {
                 guard await CallEngine.requestMicrophone() else {
                     talkingTo = nil
@@ -613,12 +632,14 @@ final class TeamStore: ObservableObject {
         } else {
             guard talkingTo == teammate.id else { return }
             talkingTo = nil
+            talkLimit?.cancel()
+            talkLimit = nil
             Task { await walkie.setMuted(true) }
             scheduleWalkieIdle()
         }
     }
 
-    /// Safety net: if the panel closes mid-press, the release never arrives, so stop here.
+    /// Stops talking to whoever the walkie-talkie is on for.
     func stopTalking() {
         guard let id = talkingTo, let teammate = teammates.first(where: { $0.id == id }) else { return }
         setTalking(false, to: teammate)

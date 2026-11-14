@@ -39,8 +39,12 @@ How to use it:
     is rung; teammates see that you are inside and can join you. Click
     the red button to leave.
   - Clicking a teammate who is in the room also takes you in.
-  - Walkie-talkie: hold the round button on the right of a teammate's
+  - Walkie-talkie: click the round button on the right of a teammate's
     row to talk to them instantly. Wait for the short chirp, then speak.
+    Click the button again to stop (it also stops by itself after
+    3 minutes).
+  - Less background noise: while your microphone is in use, open
+    Control Center, click Mic Mode and choose Voice Isolation.
   - In the room, use the share button to share a screen or one window.
   - When a teammate shares, drag in the window that opens to draw on
     their screen.

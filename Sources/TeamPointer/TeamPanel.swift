@@ -496,13 +496,13 @@ private struct TeammateRow: View {
         if isSharing { return "Click to view \(teammate.name)'s screen" }
         if canJoinThem { return "Click to join \(teammate.name) in the team room" }
         if team.isInRoom { return "\(teammate.name) is online" }
-        return "Hold the button on the right to talk to \(teammate.name)"
+        return "Click the button on the right to talk to \(teammate.name)"
     }
 
     private var statusText: String {
-        if isTalking { return team.walkieReady ? "Talking… they can hear you" : "Connecting…" }
+        if isTalking { return team.walkieReady ? "Talking · click ■ to stop" : "Connecting…" }
         if team.walkiePeer == teammate.id {
-            return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · hold to reply"
+            return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · click to reply"
         }
         if isSharing { return "Sharing their screen · click to view" }
         if team.isInRoom(teammate) {
@@ -513,7 +513,7 @@ private struct TeammateRow: View {
     }
 }
 
-/// Walkie-talkie: hold to talk, release to stop.
+/// Walkie-talkie: click to talk, click again to stop.
 private struct TalkButton: View {
     @EnvironmentObject private var team: TeamStore
     let teammate: Teammate
@@ -521,21 +521,19 @@ private struct TalkButton: View {
     private var isTalking: Bool { team.talkingTo == teammate.id }
 
     var body: some View {
-        Image(systemName: "dot.radiowaves.left.and.right")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(isTalking ? Color.white : Color.secondary)
-            .frame(width: 30, height: 30)
-            .background(Circle().fill(isTalking ? Color.red : Color.primary.opacity(0.1)))
-            .scaleEffect(isTalking ? 1.15 : 1)
-            .animation(.easeOut(duration: 0.12), value: isTalking)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !isTalking { team.setTalking(true, to: teammate) }
-                    }
-                    .onEnded { _ in team.setTalking(false, to: teammate) }
-            )
-            .help("Hold to talk to \(teammate.name)")
+        Button {
+            team.toggleTalking(to: teammate)
+        } label: {
+            Image(systemName: isTalking ? "stop.fill" : "dot.radiowaves.left.and.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isTalking ? Color.white : Color.secondary)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(isTalking ? Color.red : Color.primary.opacity(0.1)))
+                .scaleEffect(isTalking ? 1.15 : 1)
+                .animation(.easeOut(duration: 0.12), value: isTalking)
+        }
+        .buttonStyle(.plain)
+        .help(isTalking ? "Click to stop talking" : "Click to talk to \(teammate.name)")
     }
 }
 
