@@ -4,8 +4,8 @@
 set -euo pipefail
 
 # Rename the product here; nothing else needs to change.
-APP_NAME="Thataway"
-BUNDLE_ID="com.example.thataway"
+APP_NAME='Just Show Up!'
+BUNDLE_ID="com.example.justshowup"
 
 CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
