@@ -48,10 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             // The app's mark. Drawn as text so it follows the menu bar's light/dark colour.
             button.image = nil
-            button.attributedTitle = NSAttributedString(
-                string: "✦✦",
-                attributes: [.font: NSFont.systemFont(ofSize: 14), .kern: -1]
-            )
+            button.font = NSFont.systemFont(ofSize: 14)
+            button.title = "✦✦"
             button.setAccessibilityLabel(AppInfo.name)
         }
     }
