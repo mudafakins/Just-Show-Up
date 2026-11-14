@@ -97,5 +97,12 @@ func makeSupabaseClient(_ config: AppConfig) -> SupabaseClient {
 
 func friendlyMessage(_ error: Error) -> String {
     if let error = error as? PostgrestError { return error.message }
+    // Edge Functions answer errors as {"error": "..."}; show that text rather than a bare status code.
+    if case let FunctionsError.httpError(code, data) = error {
+        if let body = try? JSONDecoder().decode([String: String].self, from: data), let message = body["error"] {
+            return message
+        }
+        return "The server answered with error \(code)."
+    }
     return error.localizedDescription
 }

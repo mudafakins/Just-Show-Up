@@ -44,11 +44,25 @@ async function signJWT(payload: Record<string, unknown>, secret: string) {
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
 
-  const livekitURL = Deno.env.get("LIVEKIT_URL");
-  const apiKey = Deno.env.get("LIVEKIT_API_KEY");
-  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
+  // Trim: a stray space or line break from copy-paste would make LiveKit reject the token.
+  const livekitURL = Deno.env.get("LIVEKIT_URL")?.trim();
+  const apiKey = Deno.env.get("LIVEKIT_API_KEY")?.trim();
+  const apiSecret = Deno.env.get("LIVEKIT_API_SECRET")?.trim();
   if (!livekitURL || !apiKey || !apiSecret) {
     return json({ error: "LiveKit secrets are not set on the server." }, 500);
+  }
+  // Catch the common mix-ups early, with a message that says which secret is wrong.
+  if (!livekitURL.startsWith("wss://")) {
+    return json({ error: "LIVEKIT_URL must start with wss://" }, 500);
+  }
+  if (!apiKey.startsWith("API") || apiKey.length > 30) {
+    return json({ error: "LIVEKIT_API_KEY does not look like a LiveKit API key (they start with API and are short)." }, 500);
+  }
+  if (apiSecret.startsWith("API") && apiSecret.length < 30) {
+    return json({ error: "LIVEKIT_API_SECRET looks like an API key. The key and secret may be swapped." }, 500);
+  }
+  if (apiSecret.length < 30) {
+    return json({ error: "LIVEKIT_API_SECRET looks too short. Paste the full secret." }, 500);
   }
 
   const authorization = req.headers.get("Authorization") ?? "";
