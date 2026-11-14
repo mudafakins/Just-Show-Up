@@ -51,6 +51,7 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/Mac
 
 # Bundle the keys (Config.local.json is Git-ignored; see Config.example.json).
 mkdir -p "$APP/Contents/Resources"
+cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 if [[ -f "$ROOT/Config.local.json" ]]; then
     cp "$ROOT/Config.local.json" "$APP/Contents/Resources/Config.json"
 else
