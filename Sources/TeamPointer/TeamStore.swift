@@ -18,7 +18,11 @@ struct IncomingCall: Equatable {
 
 /// Sent between teammates over the team channel to ring, cancel and decline.
 struct CallSignal: Codable {
-    enum Kind: String, Codable { case ring, cancel, decline, busy }
+    enum Kind: String, Codable {
+        case ring, cancel, decline, busy
+        /// Walkie-talkie: "I'm about to talk to you" and "I can't listen right now".
+        case talk, talkBusy
+    }
     let kind: Kind
     let from: UUID
     let to: UUID
@@ -59,8 +63,18 @@ final class TeamStore: ObservableObject {
     @Published var isSharingScreen = false
     /// Teammates whose screen I can currently watch.
     @Published var sharingTeammates: Set<UUID> = []
-    /// Walkie-talkie target (still simulated).
+    /// Drawing on my own shared screen is switched on.
+    @Published var isDrawingOnOwnScreen = false
+
+    // Walkie-talkie
+    /// The teammate I'm holding the talk button for.
     @Published var talkingTo: UUID?
+    /// The teammate I have an open walkie-talkie line with.
+    @Published var walkiePeer: UUID?
+    /// The line is connected and the other side is listening.
+    @Published var walkieReady = false
+    /// Who is audibly speaking right now.
+    @Published var speaking: Set<UUID> = []
 
     /// Lets the app delegate open the panel when a call comes in.
     var onIncomingCall: (() -> Void)?
@@ -72,6 +86,9 @@ final class TeamStore: ObservableObject {
     private var presenceTask: Task<Void, Never>?
     private var signalTask: Task<Void, Never>?
     private let engine = CallEngine()
+    /// A second, separate audio line used only for walkie-talkie.
+    private let walkie = CallEngine()
+    private var walkieIdle: Task<Void, Never>?
     private var ringTimer: Timer?
 
     init() {
@@ -90,9 +107,31 @@ final class TeamStore: ObservableObject {
             self.endCallIfAlone()
         }
         engine.onRemoteSharesChanged = { [weak self] ids in self?.sharingTeammates = ids }
-        engine.onLocalShareStopped = { [weak self] in self?.isSharingScreen = false }
+        engine.onLocalShareStopped = { [weak self] in
+            self?.isSharingScreen = false
+            self?.isDrawingOnOwnScreen = false
+        }
+        engine.onDrawModeExited = { [weak self] in self?.isDrawingOnOwnScreen = false }
+        engine.onSpeakersChanged = { [weak self] ids in self?.speaking = ids }
+        engine.colorForUser = { [weak self] id in
+            guard let self else { return .systemPink }
+            let person = self.me?.id == id ? self.me : self.teammates.first { $0.id == id }
+            return NSColor(person?.color ?? .pink)
+        }
         engine.nameForUser = { [weak self] id in
-            self?.teammates.first { $0.id == id }?.name ?? "Teammate"
+            guard let self else { return "Teammate" }
+            if self.me?.id == id { return self.me?.name ?? "Me" }
+            return self.teammates.first { $0.id == id }?.name ?? "Teammate"
+        }
+
+        walkie.onParticipantsChanged = { [weak self] ids in self?.walkieParticipantsChanged(ids) }
+        walkie.onSpeakersChanged = { [weak self] ids in self?.speaking = ids }
+        walkie.onDisconnected = { [weak self] in
+            guard let self else { return }
+            self.walkiePeer = nil
+            self.walkieReady = false
+            self.talkingTo = nil
+            self.speaking = []
         }
         engine.onDisconnected = { [weak self] in
             guard let self, self.call != nil else { return }
@@ -166,6 +205,7 @@ final class TeamStore: ObservableObject {
         teamID = nil
         hangUp()
         dismissIncoming()
+        await closeWalkie()
         phase = .welcome
     }
 
@@ -322,6 +362,8 @@ final class TeamStore: ObservableObject {
     var menuBarSymbol: String? {
         if incoming != nil { return "phone.arrow.down.left.fill" }
         if talkingTo != nil { return "dot.radiowaves.left.and.right" }
+        // Someone is talking to me over the walkie-talkie.
+        if let walkiePeer, speaking.contains(walkiePeer) { return "dot.radiowaves.left.and.right" }
         return doNotDisturb ? "moon.fill" : nil
     }
 
@@ -356,6 +398,7 @@ final class TeamStore: ObservableObject {
     private func ring(_ teammate: Teammate) async {
         notice = nil
         errorMessage = nil
+        await closeWalkie()
 
         if let current = call {
             call?.ringing.insert(teammate.id)
@@ -467,6 +510,18 @@ final class TeamStore: ObservableObject {
         Task { await engine.stopSharing() }
     }
 
+    /// Lets me draw on my own shared screen; Esc or the same button switches it off.
+    func toggleDrawMode() {
+        guard isSharingScreen else { return }
+        isDrawingOnOwnScreen.toggle()
+        engine.setDrawMode(isDrawingOnOwnScreen)
+    }
+
+    /// Clears everyone's drawings on my shared screen.
+    func clearDrawings() {
+        engine.clearMyBoard()
+    }
+
     /// Reopens a teammate's shared screen if its window was closed.
     func showSharedScreen(of teammate: Teammate) {
         engine.showViewer(for: teammate.id)
@@ -481,6 +536,7 @@ final class TeamStore: ObservableObject {
         errorMessage = nil
         call = CallState(room: accepted.room)
         Task {
+            await closeWalkie()
             guard await joinAudio(room: accepted.room) else { return }
             // Give the room a moment to list who is there; if the caller already left, end.
             try? await Task.sleep(for: .seconds(2))
@@ -533,6 +589,22 @@ final class TeamStore: ObservableObject {
             call?.ringing.remove(signal.from)
             notice = signal.kind == .busy ? "\(name) is busy." : "\(name) declined."
             endCallIfAlone()
+
+        case .talk:
+            // Walkie-talkie: open the line and play their voice straight away, no ringing.
+            let busyWithSomeoneElse = walkiePeer != nil && walkiePeer != signal.from && talkingTo != nil
+            if doNotDisturb || call != nil || incoming != nil || busyWithSomeoneElse {
+                await send(.talkBusy, to: signal.from, room: signal.room)
+                return
+            }
+            notice = nil
+            await openWalkie(with: signal.from)
+            scheduleWalkieIdle()
+
+        case .talkBusy:
+            guard walkiePeer == signal.from else { return }
+            await closeWalkie()
+            notice = "\(name) can't listen right now."
         }
     }
 
@@ -550,11 +622,117 @@ final class TeamStore: ObservableObject {
         }
     }
 
-    // MARK: Walkie-talkie (simulated)
+    // MARK: Walkie-talkie
+    //
+    // Hold to talk: the first press opens a private audio line to that teammate (about a
+    // second), a short chirp says they can hear you, and the line stays open for a while
+    // so replies are instant. Nobody has to accept anything.
+
+    /// The private line's room name; both sides derive the same one.
+    private func walkieRoom(with peer: UUID) -> String? {
+        guard let teamID, let me else { return nil }
+        let pair = [me.id.uuidString.lowercased(), peer.uuidString.lowercased()].sorted()
+        return "\(teamID.uuidString.lowercased()):talk:\(pair[0])-\(pair[1])"
+    }
 
     func setTalking(_ talking: Bool, to teammate: Teammate) {
-        guard teammate.isOnline else { return }
-        talkingTo = talking ? teammate.id : nil
+        if talking {
+            guard teammate.isOnline, call == nil, incoming == nil, talkingTo == nil else { return }
+            guard let room = walkieRoom(with: teammate.id) else { return }
+            talkingTo = teammate.id
+            notice = nil
+            errorMessage = nil
+            Task {
+                guard await CallEngine.requestMicrophone() else {
+                    talkingTo = nil
+                    errorMessage = "Microphone access is off. Allow it in System Settings → Privacy & Security → Microphone."
+                    return
+                }
+                // Each press also tells the other side to open (or keep open) the line.
+                await send(.talk, to: teammate.id, room: room)
+                await openWalkie(with: teammate.id)
+                if talkingTo == teammate.id, walkieReady {
+                    await startTransmitting()
+                }
+            }
+        } else {
+            guard talkingTo == teammate.id else { return }
+            talkingTo = nil
+            Task { await walkie.setMuted(true) }
+            scheduleWalkieIdle()
+        }
+    }
+
+    /// Safety net: if the panel closes mid-press, the release never arrives, so stop here.
+    func stopTalking() {
+        guard let id = talkingTo, let teammate = teammates.first(where: { $0.id == id }) else { return }
+        setTalking(false, to: teammate)
+    }
+
+    private func openWalkie(with peer: UUID) async {
+        if walkiePeer == peer, walkie.isConnected { return }
+        if walkiePeer != nil, walkiePeer != peer { await closeWalkie(keepTalking: true) }
+        guard let client, let room = walkieRoom(with: peer) else { return }
+        walkiePeer = peer
+        walkieReady = false
+        do {
+            let pass: CallPass = try await client.functions.invoke(
+                "livekit-token", options: .init(body: ["room": room])
+            )
+            // Still wanted? (The press may have ended and the line been closed meanwhile.)
+            guard walkiePeer == peer else { return }
+            try await walkie.connect(url: pass.url, token: pass.token, microphone: false)
+        } catch {
+            await closeWalkie()
+            errorMessage = "Couldn't open the walkie-talkie: \(friendlyMessage(error))"
+        }
+    }
+
+    private func walkieParticipantsChanged(_ ids: Set<UUID>) {
+        guard let peer = walkiePeer else { return }
+        let ready = ids.contains(peer)
+        if ready, !walkieReady {
+            walkieReady = true
+            if talkingTo == peer {
+                Task { await startTransmitting() }
+            }
+        } else if !ready, walkieReady {
+            // The other side closed the line.
+            Task { await closeWalkie() }
+        }
+    }
+
+    private func startTransmitting() async {
+        // The chirp means "they can hear you now".
+        NSSound(named: "Tink")?.play()
+        await walkie.setMuted(false)
+        // Released during the chirp: don't leave the microphone open.
+        if talkingTo == nil { await walkie.setMuted(true) }
+    }
+
+    /// Closes the line after a quiet spell.
+    private func scheduleWalkieIdle() {
+        walkieIdle?.cancel()
+        walkieIdle = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            guard let self, !Task.isCancelled else { return }
+            if self.talkingTo == nil, self.speaking.isEmpty {
+                await self.closeWalkie()
+            } else {
+                self.scheduleWalkieIdle()
+            }
+        }
+    }
+
+    private func closeWalkie(keepTalking: Bool = false) async {
+        walkieIdle?.cancel()
+        walkieIdle = nil
+        guard walkiePeer != nil || walkie.isConnected else { return }
+        walkiePeer = nil
+        walkieReady = false
+        if !keepTalking { talkingTo = nil }
+        speaking = []
+        await walkie.disconnect()
     }
 }
 

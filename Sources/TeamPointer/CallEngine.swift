@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import LiveKit
+import SwiftUI
 
 /// Something that can be shared: a whole display or one window.
 struct ShareSource: Identifiable {
@@ -10,10 +11,12 @@ struct ShareSource: Identifiable {
     /// Size in pixels to capture at.
     fileprivate let dimensions: Dimensions
     fileprivate let source: MacOSScreenCaptureSource
+    /// Where the drawing overlay goes on my own screen.
+    fileprivate let overlayTarget: SharerOverlay.Target
 }
 
-/// The audio side of a call: one LiveKit room, microphone on, no video.
-/// TeamStore decides who is in the call; this only carries the sound.
+/// One LiveKit room: audio, screen sharing and drawing. No camera video.
+/// TeamStore decides who is in the call; this carries the media.
 @MainActor
 final class CallEngine {
     /// Teammates currently connected to the room (by user id), not counting me.
@@ -24,27 +27,44 @@ final class CallEngine {
     var onRemoteSharesChanged: ((Set<UUID>) -> Void)?
     /// My own share stopped (by me, or because the call ended).
     var onLocalShareStopped: (() -> Void)?
-    /// Used for the viewer window's title.
+    /// Used for the viewer window's title and cursor labels.
     var nameForUser: (UUID) -> String = { _ in "Teammate" }
+    /// Each person's ink and cursor colour.
+    var colorForUser: (UUID) -> NSColor = { _ in .systemPink }
+    /// Draw-on-my-own-screen mode was switched off with Esc.
+    var onDrawModeExited: (() -> Void)?
+    /// Who is audibly speaking right now (not counting me).
+    var onSpeakersChanged: ((Set<UUID>) -> Void)?
 
     private var room: Room?
     private var relay: Relay?
     private var sharePublication: LocalTrackPublication?
     private var viewers: [UUID: ShareViewer] = [:]
+    private var myID: UUID?
+    /// One drawing board per shared screen, keyed by the sharer.
+    private var boards: [UUID: InkBoard] = [:]
+    private var overlay: SharerOverlay?
+    private var infoTimer: Timer?
 
     static func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    func connect(url: String, token: String) async throws {
+    /// `microphone: false` joins silently (used by the walkie-talkie's listening side).
+    func connect(url: String, token: String, microphone: Bool = true) async throws {
         let relay = Relay(engine: self)
         let room = Room(delegate: relay)
         self.relay = relay
         self.room = room
         try await room.connect(url: url, token: token)
-        try await room.localParticipant.setMicrophone(enabled: true)
+        myID = room.localParticipant.identity.flatMap { UUID(uuidString: $0.stringValue) }
+        if microphone {
+            try await room.localParticipant.setMicrophone(enabled: true)
+        }
         reportParticipants()
     }
+
+    var isConnected: Bool { room != nil }
 
     func setMuted(_ muted: Bool) async {
         _ = try? await room?.localParticipant.setMicrophone(enabled: !muted)
@@ -63,9 +83,69 @@ final class CallEngine {
             sharePublication = nil
             onLocalShareStopped?()
         }
+        closeOverlay()
         viewers.values.forEach { $0.close() }
         viewers = [:]
+        boards = [:]
         onRemoteSharesChanged?([])
+    }
+
+    private func closeOverlay() {
+        infoTimer?.invalidate()
+        infoTimer = nil
+        overlay?.close()
+        overlay = nil
+        if let myID { boards[myID]?.reset() }
+    }
+
+    // MARK: Drawing
+
+    private var people: InkPeople {
+        InkPeople(me: myID ?? UUID(), color: colorForUser, name: nameForUser)
+    }
+
+    private func board(for sharer: UUID) -> InkBoard {
+        if let board = boards[sharer] { return board }
+        let board = InkBoard()
+        boards[sharer] = board
+        return board
+    }
+
+    /// Applies my own drawing immediately, then sends it to everyone in the call.
+    fileprivate func sendInk(_ message: InkMessage) {
+        guard let room, let myID else { return }
+        board(for: message.board).apply(message, from: myID)
+        guard let data = try? JSONEncoder().encode(message) else { return }
+        // Strokes must all arrive; pointer positions can be dropped if the network is busy.
+        let reliable = ![.cursor, .leave, .info].contains(message.kind)
+        Task {
+            try? await room.localParticipant.publish(
+                data: data, options: DataPublishOptions(topic: "ink", reliable: reliable)
+            )
+        }
+    }
+
+    fileprivate func receiveInk(_ data: Data, from user: UUID) {
+        guard let message = try? JSONDecoder().decode(InkMessage.self, from: data) else { return }
+        board(for: message.board).apply(message, from: user)
+    }
+
+    /// Lets me draw on my own shared screen (otherwise clicks pass through the overlay).
+    func setDrawMode(_ on: Bool) {
+        overlay?.setDrawMode(on)
+    }
+
+    /// Clears everyone's drawings on my shared screen.
+    func clearMyBoard() {
+        guard let myID else { return }
+        sendInk(InkMessage(kind: .clear, board: myID))
+    }
+
+    private func sendShareInfo() {
+        guard let myID, let aspect = overlay?.aspect else { return }
+        var message = InkMessage(kind: .info, board: myID)
+        message.aspect = aspect
+        sendInk(message)
     }
 
     // MARK: Sharing my screen
@@ -93,7 +173,8 @@ final class CallEngine {
                 title: displays.count == 1 ? "Entire Screen" : "Screen \(index + 1)",
                 isDisplay: true,
                 dimensions: Self.captureSize(width: display.width, height: display.height),
-                source: display
+                source: display,
+                overlayTarget: .display(display.displayID)
             ))
         }
 
@@ -111,7 +192,8 @@ final class CallEngine {
                 isDisplay: false,
                 // Windows report points; capture at 2x for sharp text.
                 dimensions: Self.captureSize(width: Int(window.frame.width * 2), height: Int(window.frame.height * 2)),
-                source: window
+                source: window,
+                overlayTarget: .window(window.windowID)
             ))
             if result.count >= displays.count + 15 { break }
         }
@@ -142,11 +224,29 @@ final class CallEngine {
                 simulcast: false
             )
         )
+
+        // The see-through layer on my own screen where teammates' ink and cursors appear.
+        if let myID {
+            let overlay = SharerOverlay(
+                board: board(for: myID), boardID: myID, people: people, target: share.overlayTarget
+            ) { [weak self] in self?.sendInk($0) }
+            overlay.onExitDrawMode = { [weak self] in
+                self?.setDrawMode(false)
+                self?.onDrawModeExited?()
+            }
+            self.overlay = overlay
+            // Tell viewers the shape of what I'm sharing, and keep telling late joiners.
+            sendShareInfo()
+            infoTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sendShareInfo() }
+            }
+        }
     }
 
     func stopSharing() async {
         guard let publication = sharePublication else { return }
         sharePublication = nil
+        closeOverlay()
         try? await room?.localParticipant.unpublish(publication: publication)
         onLocalShareStopped?()
     }
@@ -160,16 +260,32 @@ final class CallEngine {
 
     fileprivate func remoteShareStarted(by user: UUID, track: VideoTrack) {
         viewers[user]?.close()
-        let viewer = ShareViewer(title: "\(nameForUser(user))’s Screen", track: track)
+        let board = board(for: user)
+        board.reset()
+        let viewer = ShareViewer(
+            title: "\(nameForUser(user))’s Screen — drag to draw",
+            track: track, board: board, boardID: user, people: people
+        ) { [weak self] in self?.sendInk($0) }
         viewers[user] = viewer
         viewer.show()
         onRemoteSharesChanged?(Set(viewers.keys))
     }
 
     fileprivate func remoteShareStopped(by user: UUID) {
+        boards[user]?.removeUser(user)
         guard let viewer = viewers.removeValue(forKey: user) else { return }
         viewer.close()
+        boards[user] = nil
         onRemoteSharesChanged?(Set(viewers.keys))
+    }
+
+    fileprivate func participantLeft(_ user: UUID) {
+        boards.values.forEach { $0.removeUser(user) }
+        remoteShareStopped(by: user)
+    }
+
+    fileprivate func reportSpeakers(_ ids: Set<UUID>) {
+        onSpeakersChanged?(ids.subtracting([myID].compactMap { $0 }))
     }
 
     fileprivate func reportParticipants() {
@@ -203,7 +319,7 @@ private final class Relay: RoomDelegate, @unchecked Sendable {
     func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
         let user = participant.identity.flatMap { UUID(uuidString: $0.stringValue) }
         Task { @MainActor [engine] in
-            if let user { engine?.remoteShareStopped(by: user) }
+            if let user { engine?.participantLeft(user) }
             engine?.reportParticipants()
         }
     }
@@ -214,6 +330,16 @@ private final class Relay: RoomDelegate, @unchecked Sendable {
               let user = participant.identity.flatMap({ UUID(uuidString: $0.stringValue) })
         else { return }
         Task { @MainActor [engine] in engine?.remoteShareStarted(by: user, track: track) }
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String, encryptionType: EncryptionType) {
+        guard topic == "ink", let user = participant?.identity.flatMap({ UUID(uuidString: $0.stringValue) }) else { return }
+        Task { @MainActor [engine] in engine?.receiveInk(data, from: user) }
+    }
+
+    func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) {
+        let ids = Set(participants.compactMap { $0.identity.flatMap { UUID(uuidString: $0.stringValue) } })
+        Task { @MainActor [engine] in engine?.reportSpeakers(ids) }
     }
 
     func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) {
@@ -228,18 +354,22 @@ private final class Relay: RoomDelegate, @unchecked Sendable {
     }
 }
 
-/// A resizable window showing one teammate's shared screen.
+/// A resizable window showing one teammate's shared screen, with a drawing layer on top.
 @MainActor
 private final class ShareViewer {
     private let window: NSWindow
 
-    init(title: String, track: VideoTrack) {
+    init(
+        title: String, track: VideoTrack, board: InkBoard, boardID: UUID,
+        people: InkPeople, send: @escaping (InkMessage) -> Void
+    ) {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let width = min(1100, screen.width * 0.7)
         let size = NSSize(width: width, height: width * 10 / 16)
+        let frame = NSRect(origin: .zero, size: size)
 
         window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: frame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -248,13 +378,40 @@ private final class ShareViewer {
         window.isReleasedWhenClosed = false
         window.backgroundColor = .black
         window.minSize = NSSize(width: 480, height: 300)
+        window.acceptsMouseMovedEvents = true
         window.center()
 
-        let video = VideoView(frame: NSRect(origin: .zero, size: size))
+        let container = NSView(frame: frame)
+
+        let video = VideoView(frame: frame)
         video.layoutMode = .fit
         video.track = track
         video.autoresizingMask = [.width, .height]
-        window.contentView = video
+        container.addSubview(video)
+
+        // Ink sits above the video and follows the same letterboxed rectangle.
+        let ink = InkView(board: board, people: people, fitsAspect: true, send: send)
+        ink.boardID = boardID
+        ink.frame = frame
+        ink.autoresizingMask = [.width, .height]
+        ink.isInteractive = true
+        if let dimensions = track.dimensions, dimensions.height > 0 {
+            ink.fallbackAspect = Double(dimensions.width) / Double(dimensions.height)
+        }
+        container.addSubview(ink)
+
+        let controls = NSHostingView(rootView: InkControls {
+            send(InkMessage(kind: .clear, board: boardID))
+        })
+        let controlsSize = controls.fittingSize
+        controls.frame = NSRect(
+            x: frame.width - controlsSize.width, y: frame.height - controlsSize.height,
+            width: controlsSize.width, height: controlsSize.height
+        )
+        controls.autoresizingMask = [.minXMargin, .minYMargin]
+        container.addSubview(controls)
+
+        window.contentView = container
     }
 
     func show() {

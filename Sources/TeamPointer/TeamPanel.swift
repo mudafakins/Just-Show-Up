@@ -211,6 +211,7 @@ private struct TeamList: View {
 /// Settings gear on the left, app name centred.
 private struct Header: View {
     @EnvironmentObject private var team: TeamStore
+    @AppStorage(InkSettings.keepInkKey) private var keepInk = false
 
     var body: some View {
         ZStack {
@@ -224,6 +225,7 @@ private struct Header: View {
                         Divider()
                     }
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
+                    Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Divider()
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }
@@ -353,7 +355,9 @@ private struct TeammateRow: View {
 
             Spacer(minLength: 0)
 
-            if teammate.isOnline && (isHovered || isTalking) {
+            if teammate.isOnline, team.call == nil,
+               isHovered || isTalking || team.walkiePeer == teammate.id
+            {
                 TalkButton(teammate: teammate)
             }
         }
@@ -376,7 +380,11 @@ private struct TeammateRow: View {
     }
 
     private var statusText: String {
-        if isTalking { return "Talking…" }
+        if isTalking { return team.walkieReady ? "Talking… they can hear you" : "Connecting…" }
+        if team.walkiePeer == teammate.id {
+            return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · hold to reply"
+        }
+        if team.isInCall(teammate), team.speaking.contains(teammate.id) { return "Speaking…" }
         if team.sharingTeammates.contains(teammate.id) { return "Sharing their screen · click to view" }
         if team.isRinging(teammate) { return "Ringing…" }
         if team.isInCall(teammate) { return "In call with you" }
@@ -458,6 +466,20 @@ private struct CallBar: View {
 
             ShareButton()
 
+            if team.isSharingScreen {
+                RoundButton(
+                    symbol: "pencil.tip",
+                    tint: team.isDrawingOnOwnScreen ? .blue : nil,
+                    help: team.isDrawingOnOwnScreen
+                        ? "Stop drawing (Esc)"
+                        : "Draw on your own screen"
+                ) { team.toggleDrawMode() }
+
+                RoundButton(symbol: "eraser", tint: nil, help: "Clear all drawings") {
+                    team.clearDrawings()
+                }
+            }
+
             RoundButton(symbol: "phone.down.fill", tint: .red, help: "Hang up") {
                 team.hangUp()
             }
@@ -475,6 +497,7 @@ private struct CallBar: View {
         guard let call = team.call else { return "" }
         if call.isConnecting { return "Connecting…" }
         if call.connected.isEmpty { return "Ringing…" }
+        if team.isDrawingOnOwnScreen { return "Drawing · Esc to stop" }
         if team.isSharingScreen { return "Sharing your screen" }
         return team.isMuted ? "In call · muted" : "In call"
     }
