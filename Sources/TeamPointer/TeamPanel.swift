@@ -360,7 +360,13 @@ private struct TeammateRow: View {
         .rowStyle(isHovered: isHovered && teammate.isOnline)
         .opacity(teammate.isOnline ? 1 : 0.5)
         .onHover { isHovered = $0 }
-        .onTapGesture { team.call(teammate) }
+        .onTapGesture {
+            if team.sharingTeammates.contains(teammate.id) {
+                team.showSharedScreen(of: teammate)
+            } else {
+                team.call(teammate)
+            }
+        }
         .help(teammate.isOnline ? "Click to call \(teammate.name)" : "\(teammate.name) is offline")
         .contextMenu {
             Button("Remove \(teammate.name) from Team") {
@@ -371,6 +377,7 @@ private struct TeammateRow: View {
 
     private var statusText: String {
         if isTalking { return "Talking…" }
+        if team.sharingTeammates.contains(teammate.id) { return "Sharing their screen · click to view" }
         if team.isRinging(teammate) { return "Ringing…" }
         if team.isInCall(teammate) { return "In call with you" }
         return teammate.isOnline ? "Online" : "Offline"
@@ -449,6 +456,8 @@ private struct CallBar: View {
                 help: team.isMuted ? "Unmute" : "Mute"
             ) { team.toggleMute() }
 
+            ShareButton()
+
             RoundButton(symbol: "phone.down.fill", tint: .red, help: "Hang up") {
                 team.hangUp()
             }
@@ -466,7 +475,60 @@ private struct CallBar: View {
         guard let call = team.call else { return "" }
         if call.isConnecting { return "Connecting…" }
         if call.connected.isEmpty { return "Ringing…" }
+        if team.isSharingScreen { return "Sharing your screen" }
         return team.isMuted ? "In call · muted" : "In call"
+    }
+}
+
+/// Share button: a menu of screens and windows to share, or a stop button while sharing.
+private struct ShareButton: View {
+    @EnvironmentObject private var team: TeamStore
+    @State private var sources: [ShareSource] = []
+
+    private let symbol = "rectangle.inset.filled.and.person.filled"
+
+    var body: some View {
+        if team.isSharingScreen {
+            RoundButton(symbol: symbol, tint: .green, help: "Stop sharing") {
+                team.stopSharing()
+            }
+        } else {
+            Menu {
+                if !team.hasScreenRecordingPermission {
+                    Button("Allow Screen Recording…") { team.requestScreenRecordingPermission() }
+                    Text("Then quit and reopen the app.")
+                } else if sources.isEmpty {
+                    Text("Loading…")
+                } else {
+                    ForEach(sources.filter(\.isDisplay)) { source in
+                        Button(source.title) { team.startSharing(source) }
+                    }
+                    let windows = sources.filter { !$0.isDisplay }
+                    if !windows.isEmpty {
+                        Divider()
+                        Text("Share One Window")
+                        ForEach(windows) { source in
+                            Button(source.title) { team.startSharing(source) }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.primary)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.primary.opacity(0.1)))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Share your screen")
+            .task { sources = await team.shareSources() }
+            // Refresh as the pointer approaches, so the window list is current.
+            .onHover { inside in
+                if inside { Task { sources = await team.shareSources() } }
+            }
+        }
     }
 }
 

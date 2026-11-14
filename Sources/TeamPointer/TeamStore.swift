@@ -56,6 +56,9 @@ final class TeamStore: ObservableObject {
     @Published var notice: String?
     @Published var doNotDisturb = false
     @Published var isMuted = false
+    @Published var isSharingScreen = false
+    /// Teammates whose screen I can currently watch.
+    @Published var sharingTeammates: Set<UUID> = []
     /// Walkie-talkie target (still simulated).
     @Published var talkingTo: UUID?
 
@@ -85,6 +88,11 @@ final class TeamStore: ObservableObject {
             self.call?.connected = ids
             self.call?.ringing.subtract(ids)
             self.endCallIfAlone()
+        }
+        engine.onRemoteSharesChanged = { [weak self] ids in self?.sharingTeammates = ids }
+        engine.onLocalShareStopped = { [weak self] in self?.isSharingScreen = false }
+        engine.nameForUser = { [weak self] id in
+            self?.teammates.first { $0.id == id }?.name ?? "Teammate"
         }
         engine.onDisconnected = { [weak self] in
             guard let self, self.call != nil else { return }
@@ -414,6 +422,7 @@ final class TeamStore: ObservableObject {
         guard let current = call else { return }
         call = nil
         isMuted = false
+        isSharingScreen = false
         Task {
             for id in current.ringing {
                 await send(.cancel, to: id, room: current.room)
@@ -426,6 +435,41 @@ final class TeamStore: ObservableObject {
         isMuted.toggle()
         let muted = isMuted
         Task { await engine.setMuted(muted) }
+    }
+
+    // MARK: Screen sharing
+
+    var hasScreenRecordingPermission: Bool { CallEngine.hasScreenRecordingPermission }
+
+    func requestScreenRecordingPermission() {
+        CallEngine.requestScreenRecordingPermission()
+    }
+
+    func shareSources() async -> [ShareSource] {
+        await engine.shareSources()
+    }
+
+    func startSharing(_ source: ShareSource) {
+        guard call != nil else { return }
+        errorMessage = nil
+        Task {
+            do {
+                try await engine.startSharing(source)
+                isSharingScreen = true
+            } catch {
+                isSharingScreen = false
+                errorMessage = "Couldn't share the screen: \(friendlyMessage(error))"
+            }
+        }
+    }
+
+    func stopSharing() {
+        Task { await engine.stopSharing() }
+    }
+
+    /// Reopens a teammate's shared screen if its window was closed.
+    func showSharedScreen(of teammate: Teammate) {
+        engine.showViewer(for: teammate.id)
     }
 
     // MARK: Incoming calls
