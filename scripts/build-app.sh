@@ -7,6 +7,16 @@ set -euo pipefail
 APP_NAME='Just Show Up!'
 BUNDLE_ID="com.example.justshowup"
 
+# Sign with the local self-signed certificate when it exists, so macOS keeps the
+# microphone and Screen Recording permissions across builds. Without it the build is
+# ad-hoc signed ("-") and macOS treats every build as a brand-new app.
+SIGN_NAME="Just Show Up Local Signing"
+if security find-certificate -c "$SIGN_NAME" >/dev/null 2>&1; then
+    SIGN_IDENTITY="$SIGN_NAME"
+else
+    SIGN_IDENTITY="-"
+fi
+
 CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/$APP_NAME.app"
@@ -35,7 +45,7 @@ mkdir -p "$APP/Contents/Frameworks"
 for framework in "$BIN_DIR"/*.framework; do
     [[ -d "$framework" ]] || continue
     cp -R "$framework" "$APP/Contents/Frameworks/"
-    codesign --force --sign - "$APP/Contents/Frameworks/$(basename "$framework")" >/dev/null 2>&1
+    codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/Frameworks/$(basename "$framework")" >/dev/null 2>&1
 done
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/TeamPointer" 2>/dev/null || true
 
@@ -47,8 +57,9 @@ else
     echo "warning: Config.local.json not found; the app will show 'Setup needed'." >&2
 fi
 
-# Ad-hoc signature: enough to run locally without an Apple Developer account.
-codesign --force --sign - "$APP" >/dev/null
+# Enough to run locally without an Apple Developer account.
+codesign --force --sign "$SIGN_IDENTITY" "$APP" >/dev/null
+echo "Signed with: $SIGN_IDENTITY"
 
 echo "Built $APP"
 
