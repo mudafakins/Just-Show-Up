@@ -247,10 +247,11 @@ final class TeamStore: ObservableObject {
 
     // MARK: Calls (simulated)
 
-    var menuBarSymbol: String {
+    /// SF Symbol for the menu bar while something is happening; nil means show the ✦✦ mark.
+    var menuBarSymbol: String? {
         if talkingTo != nil { return "dot.radiowaves.left.and.right" }
         if case .inCall = activity { return "phone.fill" }
-        return doNotDisturb ? "moon.fill" : "hand.point.up.left.fill"
+        return doNotDisturb ? "moon.fill" : nil
     }
 
     var sortedTeammates: [Teammate] {

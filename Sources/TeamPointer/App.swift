@@ -39,9 +39,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateIcon() {
-        let image = NSImage(systemSymbolName: team.menuBarSymbol, accessibilityDescription: AppInfo.name)
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        guard let button = statusItem.button else { return }
+        if let symbol = team.menuBarSymbol {
+            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: AppInfo.name)
+            image?.isTemplate = true
+            button.image = image
+            button.title = ""
+        } else {
+            // The app's mark. Drawn as text so it follows the menu bar's light/dark colour.
+            button.image = nil
+            button.attributedTitle = NSAttributedString(
+                string: "✦✦",
+                attributes: [.font: NSFont.systemFont(ofSize: 14), .kern: -1]
+            )
+            button.setAccessibilityLabel(AppInfo.name)
+        }
     }
 
     @objc private func togglePopover() {
