@@ -67,9 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         popover.animates = true
 
-        // An incoming call opens the panel so Accept and Decline are right there.
-        team.onIncomingCall = { [weak self] in self?.showPopover() }
-
         // objectWillChange fires before the value changes, so read it on the next run-loop turn.
         iconUpdates = team.objectWillChange
             .receive(on: RunLoop.main)

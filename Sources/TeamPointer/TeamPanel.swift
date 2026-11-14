@@ -163,17 +163,15 @@ private struct TeamList: View {
                     .padding(.bottom, 6)
             }
 
-            if let incoming = team.incoming {
-                IncomingCallBar(incoming: incoming)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.15)))
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-            }
-            if team.call != nil {
+            // The team room: a join row when I'm outside, the controls when I'm inside.
+            if team.isInRoom {
                 CallBar()
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.14)))
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
+            } else {
+                TeamRoomRow()
+                    .padding(.horizontal, 6)
             }
             if let notice = team.notice {
                 Text(notice)
@@ -187,9 +185,6 @@ private struct TeamList: View {
             VStack(spacing: 0) {
                 if search.trimmed.isEmpty {
                     TeamCodeRow()
-                    if team.teammates.count > 1 {
-                        CallEveryoneRow()
-                    }
                 }
                 ForEach(visibleTeammates) { teammate in
                     TeammateRow(teammate: teammate)
@@ -383,43 +378,48 @@ private struct TeamCodeRow: View {
     }
 }
 
-/// Rings the whole team into one call.
-private struct CallEveryoneRow: View {
+/// The always-open voice room. Click to drop in; nobody gets rung.
+private struct TeamRoomRow: View {
     @EnvironmentObject private var team: TeamStore
     @State private var isHovered = false
 
-    private var count: Int { team.teammatesToCall.count }
-    private var isEnabled: Bool { count > 0 && team.incoming == nil }
+    private var inside: [Teammate] { team.roomTeammates }
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "person.3.fill")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(inside.isEmpty ? Color.secondary : Color.white)
                 .frame(width: 40, height: 40)
-                .background(Circle().fill(Color.primary.opacity(0.1)))
+                .background(Circle().fill(inside.isEmpty ? Color.primary.opacity(0.1) : Color.green))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(team.call == nil ? "Call Everyone" : "Add Everyone to Call")
+                Text("Team Room")
                     .font(.system(size: 15, weight: .medium))
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 0)
+
+            Text("Join")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.green))
         }
-        .rowStyle(isHovered: isHovered && isEnabled)
-        .opacity(isEnabled ? 1 : 0.5)
+        .rowStyle(isHovered: isHovered)
         .onHover { isHovered = $0 }
-        .onTapGesture { if isEnabled { team.callEveryone() } }
-        .help("Ring every online teammate into one call")
+        .onTapGesture { team.joinRoom() }
+        .help("Join the team's voice room")
     }
 
     private var subtitle: String {
-        if count == 0 {
-            return team.call == nil ? "Nobody else is online" : "Everyone online is already here"
-        }
-        return count == 1 ? "1 teammate online" : "\(count) teammates online"
+        if inside.isEmpty { return "Empty · drop in any time" }
+        let names = inside.map { $0.name.components(separatedBy: " ")[0] }
+        return names.joined(separator: ", ") + (inside.count == 1 ? " is inside" : " are inside")
     }
 }
 
@@ -469,17 +469,17 @@ private struct TeammateRow: View {
                 TalkButton(teammate: teammate)
             }
         }
-        .rowStyle(isHovered: isHovered && teammate.isOnline)
+        .rowStyle(isHovered: isHovered && (canJoinThem || isSharing))
         .opacity(teammate.isOnline ? 1 : 0.5)
         .onHover { isHovered = $0 }
         .onTapGesture {
-            if team.sharingTeammates.contains(teammate.id) {
+            if isSharing {
                 team.showSharedScreen(of: teammate)
-            } else {
-                team.call(teammate)
+            } else if canJoinThem {
+                team.joinRoom()
             }
         }
-        .help(teammate.isOnline ? "Click to call \(teammate.name)" : "\(teammate.name) is offline")
+        .help(helpText)
         .contextMenu {
             Button("Remove \(teammate.name) from Team") {
                 Task { await team.remove(teammate) }
@@ -487,15 +487,28 @@ private struct TeammateRow: View {
         }
     }
 
+    private var isSharing: Bool { team.sharingTeammates.contains(teammate.id) }
+    /// They're in the room and I'm not: clicking their name drops me in with them.
+    private var canJoinThem: Bool { !team.isInRoom && team.isInRoom(teammate) }
+
+    private var helpText: String {
+        if !teammate.isOnline { return "\(teammate.name) is offline" }
+        if isSharing { return "Click to view \(teammate.name)'s screen" }
+        if canJoinThem { return "Click to join \(teammate.name) in the team room" }
+        if team.isInRoom { return "\(teammate.name) is online" }
+        return "Hold the button on the right to talk to \(teammate.name)"
+    }
+
     private var statusText: String {
         if isTalking { return team.walkieReady ? "Talking… they can hear you" : "Connecting…" }
         if team.walkiePeer == teammate.id {
             return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · hold to reply"
         }
-        if team.isInCall(teammate), team.speaking.contains(teammate.id) { return "Speaking…" }
-        if team.sharingTeammates.contains(teammate.id) { return "Sharing their screen · click to view" }
-        if team.isRinging(teammate) { return "Ringing…" }
-        if team.isInCall(teammate) { return "In call with you" }
+        if isSharing { return "Sharing their screen · click to view" }
+        if team.isInRoom(teammate) {
+            if team.isInRoom { return team.speaking.contains(teammate.id) ? "Speaking…" : "In the room with you" }
+            return "In the team room · click to join"
+        }
         return teammate.isOnline ? "Online" : "Offline"
     }
 }
@@ -549,7 +562,7 @@ private struct Avatar: View {
     }
 }
 
-/// Shown at the top of the panel while a call is active.
+/// Shown at the top of the panel while I'm in the team room.
 private struct CallBar: View {
     @EnvironmentObject private var team: TeamStore
 
@@ -588,26 +601,24 @@ private struct CallBar: View {
                 }
             }
 
-            RoundButton(symbol: "phone.down.fill", tint: .red, help: "Hang up") {
-                team.hangUp()
+            RoundButton(symbol: "phone.down.fill", tint: .red, help: "Leave the room") {
+                team.leaveRoom()
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 
-    private var title: String {
-        let names = team.callMembers.map { $0.name.components(separatedBy: " ")[0] }
-        return names.isEmpty ? "Call" : names.joined(separator: ", ")
-    }
+    private var title: String { "Team Room" }
 
     private var status: String {
         guard let call = team.call else { return "" }
         if call.isConnecting { return "Connecting…" }
-        if call.connected.isEmpty { return "Ringing…" }
         if team.isDrawingOnOwnScreen { return "Drawing · Esc to stop" }
         if team.isSharingScreen { return "Sharing your screen" }
-        return team.isMuted ? "In call · muted" : "In call"
+        let names = team.roomTeammates.map { $0.name.components(separatedBy: " ")[0] }
+        let who = names.isEmpty ? "Just you so far" : "With " + names.joined(separator: ", ")
+        return team.isMuted ? who + " · muted" : who
     }
 }
 
@@ -660,36 +671,6 @@ private struct ShareButton: View {
                 if inside { Task { sources = await team.shareSources() } }
             }
         }
-    }
-}
-
-/// Someone is calling: accept or decline.
-private struct IncomingCallBar: View {
-    @EnvironmentObject private var team: TeamStore
-    let incoming: IncomingCall
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(incoming.fromName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Text("is calling you…")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-
-            RoundButton(symbol: "phone.down.fill", tint: .red, help: "Decline") {
-                team.declineIncoming()
-            }
-            RoundButton(symbol: "phone.fill", tint: .green, help: "Accept") {
-                team.acceptIncoming()
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 }
 

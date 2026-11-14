@@ -96,9 +96,12 @@ struct TeamRow: Decodable {
 /// What each online app publishes on the team's presence channel.
 struct PresenceState: Codable {
     let userID: String
+    /// Whether this person is in the team room. Missing from older builds.
+    var inRoom: Bool?
 
     enum CodingKeys: String, CodingKey {
         case userID = "user_id"
+        case inRoom = "in_room"
     }
 }
 

@@ -1,26 +1,20 @@
 import SwiftUI
 import Supabase
 
-/// The call I'm in. `connected` and `ringing` never include me.
+/// My connection to the team room. `connected` never includes me.
 struct CallState: Equatable {
     var room: String
     var connected: Set<UUID> = []
-    var ringing: Set<UUID> = []
     /// Still joining the audio room.
     var isConnecting = true
 }
 
-struct IncomingCall: Equatable {
-    let from: UUID
-    let fromName: String
-    let room: String
-}
-
-/// Sent between teammates over the team channel to ring, cancel and decline.
+/// Sent between teammates over the team channel for the walkie-talkie.
+/// (The ring/cancel/decline/busy kinds belong to older builds and are ignored.)
 struct CallSignal: Codable {
     enum Kind: String, Codable {
         case ring, cancel, decline, busy
-        /// Walkie-talkie: "I'm about to talk to you" and "I can't listen right now".
+        /// "I'm about to talk to you" and "I can't listen right now".
         case talk, talkBusy
     }
     let kind: Kind
@@ -56,8 +50,10 @@ final class TeamStore: ObservableObject {
     @Published var isEditingName = false
 
     // Calls
+    /// Set while I'm in the team room.
     @Published var call: CallState?
-    @Published var incoming: IncomingCall?
+    /// Teammates who are in the team room right now (known even when I'm not in it).
+    @Published var roomMembers: Set<UUID> = []
     /// A short neutral message such as "Maya declined".
     @Published var notice: String?
     @Published var doNotDisturb = false
@@ -78,8 +74,6 @@ final class TeamStore: ObservableObject {
     /// Who is audibly speaking right now.
     @Published var speaking: Set<UUID> = []
 
-    /// Lets the app delegate open the panel when a call comes in.
-    var onIncomingCall: (() -> Void)?
 
     private let client: SupabaseClient?
     private var teamID: UUID?
@@ -91,7 +85,6 @@ final class TeamStore: ObservableObject {
     /// A second, separate audio line used only for walkie-talkie.
     private let walkie = CallEngine()
     private var walkieIdle: Task<Void, Never>?
-    private var ringTimer: Timer?
 
     init() {
         guard let config = AppConfig.load() else {
@@ -105,8 +98,6 @@ final class TeamStore: ObservableObject {
         engine.onParticipantsChanged = { [weak self] ids in
             guard let self, self.call != nil else { return }
             self.call?.connected = ids
-            self.call?.ringing.subtract(ids)
-            self.endCallIfAlone()
         }
         engine.onRemoteSharesChanged = { [weak self] ids in self?.sharingTeammates = ids }
         engine.onLocalShareStopped = { [weak self] in
@@ -139,7 +130,8 @@ final class TeamStore: ObservableObject {
             guard let self, self.call != nil else { return }
             self.call = nil
             self.isMuted = false
-            self.notice = "The call was disconnected."
+            self.notice = "You were disconnected from the team room."
+            Task { await self.updatePresence() }
         }
 
         Task { [weak self] in
@@ -231,8 +223,7 @@ final class TeamStore: ObservableObject {
         teammates = []
         teamCode = nil
         teamID = nil
-        hangUp()
-        dismissIncoming()
+        leaveRoom()
         await closeWalkie()
         phase = .welcome
     }
@@ -324,7 +315,9 @@ final class TeamStore: ObservableObject {
                 let left = (try? change.decodeLeaves(as: PresenceState.self)) ?? []
                 let joined = (try? change.decodeJoins(as: PresenceState.self)) ?? []
                 await self?.applyPresence(
-                    joined: joined.compactMap { UUID(uuidString: $0.userID) },
+                    joined: joined.compactMap { state in
+                        UUID(uuidString: state.userID).map { ($0, state.inRoom ?? false) }
+                    },
                     left: left.compactMap { UUID(uuidString: $0.userID) }
                 )
             }
@@ -342,7 +335,7 @@ final class TeamStore: ObservableObject {
 
         do {
             try await channel.subscribeWithError()
-            try await channel.track(PresenceState(userID: userID.uuidString.lowercased()))
+            try await channel.track(PresenceState(userID: userID.uuidString.lowercased(), inRoom: false))
         } catch {
             errorMessage = "Couldn't connect for live presence: \(friendlyMessage(error))"
         }
@@ -359,36 +352,51 @@ final class TeamStore: ObservableObject {
         }
         presenceChannel = nil
         onlineIDs = []
+        roomMembers = []
     }
 
-    private func applyPresence(joined: [UUID], left: [UUID]) async {
+    /// Tells the team whether I'm in the team room, so they see it without being in it.
+    private func updatePresence() async {
+        guard let channel = presenceChannel, let me else { return }
+        let inRoom = call != nil && call?.isConnecting == false
+        try? await channel.track(PresenceState(userID: me.id.uuidString.lowercased(), inRoom: inRoom))
+    }
+
+    private func applyPresence(joined: [(id: UUID, inRoom: Bool)], left: [UUID]) async {
+        // An update arrives as "left" (old state) plus "joined" (new state) for the same person.
         onlineIDs.subtract(left)
-        onlineIDs.formUnion(joined)
+        roomMembers.subtract(left)
+        onlineIDs.formUnion(joined.map(\.id))
+        roomMembers.formUnion(joined.filter(\.inRoom).map(\.id))
+        if let myID = me?.id { roomMembers.remove(myID) }
 
         // Someone we don't know yet came online: a new teammate just joined.
         let known = Set(teammates.map(\.id)).union([me?.id].compactMap { $0 })
-        if !Set(joined).isSubset(of: known) {
+        if !Set(joined.map(\.id)).isSubset(of: known) {
             await reloadTeam()
         }
         for index in teammates.indices {
             teammates[index].isOnline = onlineIDs.contains(teammates[index].id)
         }
-        // Someone I was ringing went offline: stop waiting for them.
-        if let ringing = call?.ringing, !ringing.isSubset(of: onlineIDs) {
-            call?.ringing.formIntersection(onlineIDs)
-            endCallIfAlone()
-        }
-        if let incoming, !onlineIDs.contains(incoming.from) {
-            dismissIncoming()
+
+        // The test teammate follows people in and out of the room by itself.
+        if TestTeammate.isActive {
+            if call == nil, !roomMembers.isEmpty {
+                joinRoom()
+            } else if call?.isConnecting == false, roomMembers.isEmpty {
+                leaveRoom()
+            }
         }
     }
 
-    // MARK: Calls
+    // MARK: Team room
+    //
+    // One always-open voice room per team, like a voice channel. Nobody rings anybody:
+    // you join, teammates see that you're inside, and they drop in when they want.
 
     /// SF Symbol for the menu bar while something is happening; nil means show the ✦✦ mark.
-    /// Being on a call deliberately keeps the ✦✦ mark.
+    /// Being in the room deliberately keeps the ✦✦ mark.
     var menuBarSymbol: String? {
-        if incoming != nil { return "phone.arrow.down.left.fill" }
         if talkingTo != nil { return "dot.radiowaves.left.and.right" }
         // Someone is talking to me over the walkie-talkie.
         if let walkiePeer, speaking.contains(walkiePeer) { return "dot.radiowaves.left.and.right" }
@@ -402,68 +410,36 @@ final class TeamStore: ObservableObject {
         }
     }
 
-    /// Everyone in the call or being rung.
-    var callMembers: [Teammate] {
-        guard let call else { return [] }
-        return teammates.filter { call.connected.contains($0.id) || call.ringing.contains($0.id) }
+    var isInRoom: Bool { call != nil }
+
+    /// Whether a teammate is in the team room (heard directly once I'm connected, otherwise from presence).
+    func isInRoom(_ teammate: Teammate) -> Bool {
+        if let call, !call.isConnecting { return call.connected.contains(teammate.id) }
+        return roomMembers.contains(teammate.id)
     }
 
-    func isInCall(_ teammate: Teammate) -> Bool {
-        call?.connected.contains(teammate.id) ?? false
+    /// Teammates currently in the room, not counting me.
+    var roomTeammates: [Teammate] {
+        teammates.filter { isInRoom($0) }
     }
 
-    func isRinging(_ teammate: Teammate) -> Bool {
-        call?.ringing.contains(teammate.id) ?? false
-    }
-
-    /// Rings a teammate: starts a call, or adds them to the current one (group calls).
-    func call(_ teammate: Teammate) {
-        guard teammate.isOnline, incoming == nil else { return }
-        guard !isInCall(teammate), !isRinging(teammate) else { return }
-        Task { await ring(teammate) }
-    }
-
-    /// Online teammates who are not yet in my call or being rung.
-    var teammatesToCall: [Teammate] {
-        teammates.filter { $0.isOnline && !isInCall($0) && !isRinging($0) }
-    }
-
-    /// Rings every online teammate into one call (or the rest of them into the current call).
-    func callEveryone() {
-        let targets = teammatesToCall
-        guard !targets.isEmpty, incoming == nil else { return }
-        Task {
-            // One at a time: the first ring creates the call, the rest join the same one.
-            for (index, teammate) in targets.enumerated() {
-                await ring(teammate)
-                // Couldn't even start the call (no microphone, no connection): stop here.
-                if index == 0, call == nil { return }
-            }
-        }
-    }
-
-    private func ring(_ teammate: Teammate) async {
+    func joinRoom() {
+        guard call == nil, let teamID else { return }
         notice = nil
         errorMessage = nil
-        await closeWalkie()
-
-        if let current = call {
-            call?.ringing.insert(teammate.id)
-            await send(.ring, to: teammate.id, room: current.room)
-            scheduleRingTimeout(for: teammate, room: current.room)
-            return
+        let room = "\(teamID.uuidString.lowercased()):room"
+        call = CallState(room: room)
+        Task {
+            await closeWalkie()
+            guard await joinAudio(room: room) else { return }
+            // Two copies on one Mac share a microphone and speakers; muting one avoids a feedback howl.
+            if TestTeammate.isActive, !isMuted { toggleMute() }
+            await updatePresence()
         }
-
-        guard let teamID else { return }
-        let room = "\(teamID.uuidString.lowercased()):\(UUID().uuidString.lowercased())"
-        call = CallState(room: room, ringing: [teammate.id])
-        guard await joinAudio(room: room) else { return }
-        await send(.ring, to: teammate.id, room: room)
-        scheduleRingTimeout(for: teammate, room: room)
     }
 
-    /// Gets a call pass from the server and connects the microphone. False if it failed
-    /// or the call was hung up while connecting.
+    /// Gets a pass from the server and connects the microphone. False if it failed
+    /// or I left while connecting.
     private func joinAudio(room: String) async -> Bool {
         guard let client else { return false }
         guard await CallEngine.requestMicrophone() else {
@@ -479,11 +455,11 @@ final class TeamStore: ObservableObject {
         } catch {
             await engine.disconnect()
             if call?.room == room { call = nil }
-            errorMessage = "Couldn't start the call: \(friendlyMessage(error))"
+            errorMessage = "Couldn't join the room: \(friendlyMessage(error))"
             return false
         }
         guard call?.room == room else {
-            // Hung up while we were connecting.
+            // Left while we were connecting.
             await engine.disconnect()
             return false
         }
@@ -491,33 +467,14 @@ final class TeamStore: ObservableObject {
         return true
     }
 
-    private func scheduleRingTimeout(for teammate: Teammate, room: String) {
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(30))
-            guard let self, self.call?.room == room, self.call?.ringing.contains(teammate.id) == true else { return }
-            self.call?.ringing.remove(teammate.id)
-            await self.send(.cancel, to: teammate.id, room: room)
-            self.notice = "\(teammate.name) didn't answer."
-            self.endCallIfAlone()
-        }
-    }
-
-    /// A call with nobody connected and nobody ringing is over.
-    private func endCallIfAlone() {
-        guard let call, !call.isConnecting, call.connected.isEmpty, call.ringing.isEmpty else { return }
-        hangUp()
-    }
-
-    func hangUp() {
-        guard let current = call else { return }
+    func leaveRoom() {
+        guard call != nil else { return }
         call = nil
         isMuted = false
         isSharingScreen = false
         Task {
-            for id in current.ringing {
-                await send(.cancel, to: id, room: current.room)
-            }
             await engine.disconnect()
+            await updatePresence()
         }
     }
 
@@ -585,83 +542,17 @@ final class TeamStore: ObservableObject {
         engine.showViewer(for: teammate.id)
     }
 
-    // MARK: Incoming calls
-
-    func acceptIncoming() {
-        guard let accepted = incoming else { return }
-        dismissIncoming()
-        notice = nil
-        errorMessage = nil
-        call = CallState(room: accepted.room)
-        Task {
-            await closeWalkie()
-            guard await joinAudio(room: accepted.room) else { return }
-            // Two copies on one Mac share a microphone and speakers; muting one avoids a feedback howl.
-            if TestTeammate.isActive, !isMuted { toggleMute() }
-            // Give the room a moment to list who is there; if the caller already left, end.
-            try? await Task.sleep(for: .seconds(2))
-            if call?.room == accepted.room { endCallIfAlone() }
-        }
-    }
-
-    func declineIncoming() {
-        guard let declined = incoming else { return }
-        dismissIncoming()
-        Task { await send(.decline, to: declined.from, room: declined.room) }
-    }
-
-    private func dismissIncoming() {
-        incoming = nil
-        ringTimer?.invalidate()
-        ringTimer = nil
-    }
+    // MARK: Signals
 
     private func receive(_ signal: CallSignal) async {
         guard signal.to == me?.id else { return }
         let name = teammates.first { $0.id == signal.from }?.name ?? signal.name
 
         switch signal.kind {
-        case .ring:
-            if call?.room == signal.room || incoming?.room == signal.room { return }
-            if doNotDisturb || call != nil || incoming != nil {
-                await send(.busy, to: signal.from, room: signal.room)
-                return
-            }
-            incoming = IncomingCall(from: signal.from, fromName: name, room: signal.room)
-            if TestTeammate.isActive {
-                // The test teammate picks up by itself after a moment.
-                Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(1))
-                    self?.acceptIncoming()
-                }
-                return
-            }
-            startRingSound()
-            onIncomingCall?()
-            // Stop ringing by ourselves if the caller's cancel never arrives.
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(40))
-                guard let self, self.incoming?.room == signal.room else { return }
-                self.dismissIncoming()
-                self.notice = "Missed call from \(name)."
-            }
-
-        case .cancel:
-            if incoming?.room == signal.room, incoming?.from == signal.from {
-                dismissIncoming()
-                notice = "Missed call from \(name)."
-            }
-
-        case .decline, .busy:
-            guard call?.room == signal.room, call?.ringing.contains(signal.from) == true else { return }
-            call?.ringing.remove(signal.from)
-            notice = signal.kind == .busy ? "\(name) is busy." : "\(name) declined."
-            endCallIfAlone()
-
         case .talk:
-            // Walkie-talkie: open the line and play their voice straight away, no ringing.
+            // Walkie-talkie: open the line and play their voice straight away.
             let busyWithSomeoneElse = walkiePeer != nil && walkiePeer != signal.from && talkingTo != nil
-            if doNotDisturb || call != nil || incoming != nil || busyWithSomeoneElse {
+            if doNotDisturb || call != nil || busyWithSomeoneElse {
                 await send(.talkBusy, to: signal.from, room: signal.room)
                 return
             }
@@ -673,6 +564,10 @@ final class TeamStore: ObservableObject {
             guard walkiePeer == signal.from else { return }
             await closeWalkie()
             notice = "\(name) can't listen right now."
+
+        case .ring, .cancel, .decline, .busy:
+            // From an older build that still rings; this build has the open room instead.
+            break
         }
     }
 
@@ -680,14 +575,6 @@ final class TeamStore: ObservableObject {
         guard let me, let channel = presenceChannel else { return }
         let signal = CallSignal(kind: kind, from: me.id, to: id, room: room, name: me.name)
         try? await channel.broadcast(event: "call", message: signal)
-    }
-
-    private func startRingSound() {
-        ringTimer?.invalidate()
-        NSSound(named: "Glass")?.play()
-        ringTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { _ in
-            NSSound(named: "Glass")?.play()
-        }
     }
 
     // MARK: Walkie-talkie
@@ -705,7 +592,7 @@ final class TeamStore: ObservableObject {
 
     func setTalking(_ talking: Bool, to teammate: Teammate) {
         if talking {
-            guard teammate.isOnline, call == nil, incoming == nil, talkingTo == nil else { return }
+            guard teammate.isOnline, call == nil, talkingTo == nil else { return }
             guard let room = walkieRoom(with: teammate.id) else { return }
             talkingTo = teammate.id
             notice = nil

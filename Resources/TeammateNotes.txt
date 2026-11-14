@@ -23,10 +23,11 @@ Needs: an Apple Silicon Mac (M1 or newer) running macOS 14 or later.
    still on it and can skip this.
 
 Permissions (macOS asks the first time you use each feature):
-  - Microphone: allow it when you make or accept your first call.
-  - Screen Recording: needed only to share YOUR screen. Click the share
-    button during a call, choose "Allow Screen Recording...", switch the
-    app on in System Settings, then quit and reopen the app.
+  - Microphone: allow it the first time you join the Team Room.
+  - Screen Recording: needed only to share YOUR screen. In the room,
+    click the share button, choose "1. Allow Screen Recording...",
+    switch the app on in System Settings, then choose "2. Restart App"
+    from the same share button.
 
 If sharing still asks for permission after you allowed it, switch
 "Just Show Up!" off and on again in
@@ -34,9 +35,12 @@ System Settings > Privacy & Security > Screen & System Audio Recording,
 then quit and reopen the app.
 
 How to use it:
-  - Click a teammate's name to call them.
-  - Hold the round button on the right of their row to talk instantly
-    (walkie-talkie). Wait for the short chirp, then speak.
-  - During a call, use the share button to share a screen or one window.
+  - Team Room: click "Join" to drop into the team's voice room. Nobody
+    is rung; teammates see that you are inside and can join you. Click
+    the red button to leave.
+  - Clicking a teammate who is in the room also takes you in.
+  - Walkie-talkie: hold the round button on the right of a teammate's
+    row to talk to them instantly. Wait for the short chirp, then speak.
+  - In the room, use the share button to share a screen or one window.
   - When a teammate shares, drag in the window that opens to draw on
     their screen.
