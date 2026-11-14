@@ -215,7 +215,7 @@ private struct Header: View {
 
     var body: some View {
         ZStack {
-            Text(AppInfo.name)
+            Text(TestTeammate.isActive ? "\(TestTeammate.name) (test)" : AppInfo.name)
                 .font(.system(size: 14, weight: .bold))
 
             HStack {
@@ -227,6 +227,10 @@ private struct Header: View {
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Divider()
+                    if !TestTeammate.isActive {
+                        Button("Open Test Teammate") { team.openTestTeammate() }
+                        Divider()
+                    }
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }
                     Button("Leave Team") { Task { await team.leaveTeam() } }

@@ -150,6 +150,7 @@ final class TeamStore: ObservableObject {
                     } else {
                         self.phase = .welcome
                     }
+                    await self.joinAsTestTeammateIfNeeded()
                 case .signedOut:
                     await self.resetToWelcome()
                 default:
@@ -173,6 +174,31 @@ final class TeamStore: ObservableObject {
         await onboard {
             try await $0.rpc("join_team", params: ["my_name": name, "team_code": code]).execute()
         }
+    }
+
+    /// In test-teammate mode, join (or move to) the team whose code was passed at launch.
+    private func joinAsTestTeammateIfNeeded() async {
+        guard TestTeammate.isActive, let code = TestTeammate.joinCode else { return }
+        if phase == .inTeam, teamCode == code { return }
+        await joinTeam(name: TestTeammate.name, code: code)
+    }
+
+    /// Opens a second copy of the app as "Test Buddy" on this Mac.
+    func openTestTeammate() {
+        guard let teamCode else { return }
+        let copies = NSRunningApplication.runningApplications(
+            withBundleIdentifier: Bundle.main.bundleIdentifier ?? ""
+        )
+        if copies.count > 1 {
+            notice = "The test teammate is already running (look for ✦T in the menu bar)."
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.activates = false
+        configuration.arguments = ["--dummy", "--join", teamCode]
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+        notice = "Starting the test teammate…"
     }
 
     private func onboard(_ action: (SupabaseClient) async throws -> Void) async {
@@ -538,6 +564,8 @@ final class TeamStore: ObservableObject {
         Task {
             await closeWalkie()
             guard await joinAudio(room: accepted.room) else { return }
+            // Two copies on one Mac share a microphone and speakers; muting one avoids a feedback howl.
+            if TestTeammate.isActive, !isMuted { toggleMute() }
             // Give the room a moment to list who is there; if the caller already left, end.
             try? await Task.sleep(for: .seconds(2))
             if call?.room == accepted.room { endCallIfAlone() }
@@ -568,6 +596,14 @@ final class TeamStore: ObservableObject {
                 return
             }
             incoming = IncomingCall(from: signal.from, fromName: name, room: signal.room)
+            if TestTeammate.isActive {
+                // The test teammate picks up by itself after a moment.
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    self?.acceptIncoming()
+                }
+                return
+            }
             startRingSound()
             onIncomingCall?()
             // Stop ringing by ourselves if the caller's cancel never arrives.
