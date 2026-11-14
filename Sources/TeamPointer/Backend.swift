@@ -91,7 +91,8 @@ func makeSupabaseClient(_ config: AppConfig) -> SupabaseClient {
         supabaseURL: config.supabaseURL,
         supabaseKey: config.supabaseKey,
         options: SupabaseClientOptions(
-            auth: .init(storage: FileSessionStorage())
+            // Implicit flow: we sign in by typing the emailed code, never by opening a link.
+            auth: .init(storage: FileSessionStorage(), flowType: .implicit)
         )
     )
 }

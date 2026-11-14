@@ -100,6 +100,32 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+-- Anyone who signed up before this schema existed has no profile yet: create one now.
+do $$
+declare
+  u      record;
+  v_team uuid;
+  v_name text;
+begin
+  for u in
+    select au.id, lower(au.email) as email
+      from auth.users au
+      left join public.profiles p on p.id = au.id
+     where p.id is null and au.email is not null
+  loop
+    v_name := initcap(replace(replace(split_part(u.email, '@', 1), '.', ' '), '_', ' '));
+    select team_id into v_team from public.invites where email = u.email order by created_at limit 1;
+    if v_team is null then
+      insert into public.teams (name, created_by) values (v_name || '''s team', u.id) returning id into v_team;
+    end if;
+    insert into public.profiles (id, email, name, color_index, team_id)
+      values (u.id, u.email, v_name, floor(random() * 8)::int, v_team);
+    delete from public.invites where email = u.email;
+    v_team := null;
+  end loop;
+end;
+$$;
+
 -- ---------------------------------------------------------------- actions the app calls
 
 -- Invite a teammate by email. Returns:
