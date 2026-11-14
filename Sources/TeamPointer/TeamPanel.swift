@@ -15,9 +15,9 @@ struct TeamPanel: View {
                 )
             case .loading:
                 ProgressView().controlSize(.small).padding(30)
-            case .signedOut:
-                SignInView()
-            case .signedIn:
+            case .welcome:
+                WelcomeView()
+            case .inTeam:
                 TeamList()
             }
         }
@@ -46,53 +46,56 @@ private struct MessageView: View {
     }
 }
 
-/// Email, then the one-time code from the email. No passwords.
-private struct SignInView: View {
+/// First launch: your name, then start a team or join one with its code.
+private struct WelcomeView: View {
     @EnvironmentObject private var team: TeamStore
-    @State private var email = ""
+    @AppStorage("displayName") private var name = ""
     @State private var code = ""
-    @State private var codeSent = false
+    @State private var isJoining = false
     @State private var isWorking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(AppInfo.name).font(.system(size: 15, weight: .bold))
 
-            if codeSent {
-                Text("Enter the code we emailed to \(email).")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                TextField("Code", text: $code)
+            TextField("Your name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .textContentType(.name)
+
+            if isJoining {
+                TextField("Team code, e.g. MANGO-482913", text: $code)
                     .textFieldStyle(.roundedBorder)
-                    .onSubmit(submit)
+                    .onSubmit(join)
                 HStack {
-                    Button("Sign In", action: submit)
+                    Button("Join Team", action: join)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(code.trimmed.isEmpty || isWorking)
-                    Button("Use a different email") {
-                        codeSent = false
-                        code = ""
+                        .disabled(name.trimmed.isEmpty || code.trimmed.isEmpty || isWorking)
+                    Button("Back") {
+                        isJoining = false
                         team.errorMessage = nil
                     }
                     .buttonStyle(.link)
                     .font(.system(size: 11))
                 }
             } else {
-                Text("Sign in with your work email. We'll send you a code.")
+                HStack {
+                    Button("Join a Team") {
+                        isJoining = true
+                        team.errorMessage = nil
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    Button("Start a Team", action: start)
+                }
+                .disabled(name.trimmed.isEmpty || isWorking)
+                Text("Joining? Ask a teammate for the team code.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                TextField("you@company.com", text: $email)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.emailAddress)
-                    .onSubmit(submit)
-                Button("Send Code", action: submit)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!email.looksLikeEmail || isWorking)
             }
 
             ErrorText()
 
             HStack {
+                if isWorking { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }
                     .buttonStyle(.plain)
@@ -103,17 +106,20 @@ private struct SignInView: View {
         .padding(16)
     }
 
-    private func submit() {
+    private func start() {
         guard !isWorking else { return }
-        let address = email.trimmed.lowercased()
         isWorking = true
         Task {
-            if codeSent {
-                await team.verify(code: code.trimmed, for: address)
-            } else if address.looksLikeEmail {
-                email = address
-                codeSent = await team.sendCode(to: address)
-            }
+            await team.startTeam(name: name.trimmed)
+            isWorking = false
+        }
+    }
+
+    private func join() {
+        guard !isWorking, !name.trimmed.isEmpty, !code.trimmed.isEmpty else { return }
+        isWorking = true
+        Task {
+            await team.joinTeam(name: name.trimmed, code: code.trimmed)
             isWorking = false
         }
     }
@@ -143,8 +149,8 @@ private struct TeamList: View {
             }
 
             VStack(spacing: 2) {
-                if team.teammates.isEmpty && team.pendingInvites.isEmpty {
-                    Text("No teammates yet. Invite someone to get started.")
+                if team.teammates.isEmpty {
+                    Text("No teammates yet. Send them the team code below.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -154,10 +160,7 @@ private struct TeamList: View {
                 ForEach(team.sortedTeammates) { teammate in
                     TeammateRow(teammate: teammate)
                 }
-                ForEach(team.pendingInvites, id: \.self) { email in
-                    InviteRow_(email: email)
-                }
-                InviteField()
+                TeamCodeRow()
             }
             .padding(6)
 
@@ -175,110 +178,52 @@ private struct TeamList: View {
     }
 }
 
-/// Someone who has been invited but has not signed in yet.
-private struct InviteRow_: View {
+/// Shows the team code; click to copy it for a teammate.
+private struct TeamCodeRow: View {
     @EnvironmentObject private var team: TeamStore
-    let email: String
+    @State private var copied = false
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle()
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3]))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .overlay(Image(systemName: "envelope").font(.system(size: 11)).foregroundStyle(.secondary))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(email).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
-                Text("Invited").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 0)
-
-            if isHovered {
-                Button { team.composeInviteEmail(to: email) } label: {
-                    Image(systemName: "paperplane")
-                }
-                .buttonStyle(.plain)
-                .help("Email them an invitation")
-
-                Button { Task { await team.cancelInvite(email: email) } } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.plain)
-                .help("Cancel invite")
-            }
-        }
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
-    }
-}
-
-private struct InviteField: View {
-    @EnvironmentObject private var team: TeamStore
-    @State private var isEditing = false
-    @State private var email = ""
-    @State private var isWorking = false
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "plus")
+            Image(systemName: copied ? "checkmark" : "plus")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(Color.primary.opacity(0.08)))
 
-            if isEditing {
-                TextField("teammate@company.com", text: $email)
-                    .textFieldStyle(.plain)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(copied ? "Copied" : "Invite with team code")
                     .font(.system(size: 12))
-                    .focused($isFocused)
-                    .onSubmit(submit)
-                    .onExitCommand { isEditing = false }
-                    .disabled(isWorking)
-            } else {
-                Text("Invite teammate")
-                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Text(team.teamCode ?? "…")
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
+        )
         .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
         .onTapGesture {
-            isEditing = true
-            isFocused = true
-        }
-    }
-
-    private func submit() {
-        let address = email.trimmed.lowercased()
-        guard address.looksLikeEmail, !isWorking else { return }
-        isWorking = true
-        Task {
-            if await team.invite(email: address) {
-                email = ""
-                isEditing = false
+            team.copyTeamCode()
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
             }
-            isWorking = false
         }
+        .help("Click to copy the code, then send it to a teammate")
     }
 }
 
 extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    var looksLikeEmail: Bool {
-        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
-        return parts.count == 2 && !parts[0].isEmpty && parts[1].contains(".") && !trimmed.contains(" ")
-    }
 }
 
 private struct TeammateRow: View {
@@ -317,6 +262,11 @@ private struct TeammateRow: View {
         .onHover { isHovered = $0 }
         .onTapGesture { team.call(teammate) }
         .help(teammate.isOnline ? "Click to call \(teammate.name)" : "\(teammate.name) is offline")
+        .contextMenu {
+            Button("Remove \(teammate.name) from Team") {
+                Task { await team.remove(teammate) }
+            }
+        }
     }
 
     private var statusText: String {
@@ -448,10 +398,13 @@ private struct Footer: View {
 
             Menu {
                 if let me = team.me {
-                    Text(me.email)
+                    Text("You: \(me.name)")
                     Divider()
                 }
-                Button("Sign Out") { Task { await team.signOut() } }
+                Button("Copy Team Code") { team.copyTeamCode() }
+                Button("New Team Code") { Task { await team.regenerateCode() } }
+                Button("Leave Team") { Task { await team.leaveTeam() } }
+                Divider()
                 Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q")
             } label: {

@@ -61,20 +61,19 @@ struct FileSessionStorage: AuthLocalStorage {
 /// A row of the `profiles` table.
 struct ProfileRow: Decodable {
     let id: UUID
-    let email: String
     let name: String
     let colorIndex: Int
     let teamID: UUID?
 
     enum CodingKeys: String, CodingKey {
-        case id, email, name
+        case id, name
         case colorIndex = "color_index"
         case teamID = "team_id"
     }
 }
 
-struct InviteRow: Decodable {
-    let email: String
+struct TeamRow: Decodable {
+    let code: String
 }
 
 /// What each online app publishes on the team's presence channel.
@@ -91,8 +90,7 @@ func makeSupabaseClient(_ config: AppConfig) -> SupabaseClient {
         supabaseURL: config.supabaseURL,
         supabaseKey: config.supabaseKey,
         options: SupabaseClientOptions(
-            // Implicit flow: we sign in by typing the emailed code, never by opening a link.
-            auth: .init(storage: FileSessionStorage(), flowType: .implicit)
+            auth: .init(storage: FileSessionStorage())
         )
     )
 }

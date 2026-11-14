@@ -3,7 +3,6 @@ import SwiftUI
 struct Teammate: Identifiable, Equatable {
     let id: UUID
     var name: String
-    var email: String
     var isOnline: Bool
     var colorIndex: Int
 

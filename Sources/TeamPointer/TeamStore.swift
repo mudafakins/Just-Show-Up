@@ -11,8 +11,9 @@ enum Activity: Equatable {
 enum Phase: Equatable {
     case needsConfig
     case loading
-    case signedOut
-    case signedIn
+    /// No team yet: ask for a name and whether to start or join a team.
+    case welcome
+    case inTeam
 }
 
 @MainActor
@@ -21,7 +22,7 @@ final class TeamStore: ObservableObject {
     @Published var phase: Phase = .loading
     @Published var me: Teammate?
     @Published var teammates: [Teammate] = []
-    @Published var pendingInvites: [String] = []
+    @Published var teamCode: String?
     @Published var errorMessage: String?
 
     // Call state (simulated until step 3)
@@ -50,14 +51,14 @@ final class TeamStore: ObservableObject {
             for await (event, session) in client.auth.authStateChanges {
                 guard let self else { return }
                 switch event {
-                case .initialSession, .signedIn:
-                    if session != nil, self.phase != .signedIn {
-                        await self.didSignIn()
-                    } else if session == nil {
-                        self.phase = .signedOut
+                case .initialSession:
+                    if session != nil {
+                        await self.enterTeamIfMember()
+                    } else {
+                        self.phase = .welcome
                     }
                 case .signedOut:
-                    await self.didSignOut()
+                    await self.resetToWelcome()
                 default:
                     break
                 }
@@ -65,133 +66,128 @@ final class TeamStore: ObservableObject {
         }
     }
 
-    // MARK: Sign-in
+    // MARK: Joining
 
-    /// Emails a one-time code to the address.
-    func sendCode(to email: String) async -> Bool {
-        guard let client else { return false }
-        errorMessage = nil
-        do {
-            try await client.auth.signInWithOTP(email: email)
-            return true
-        } catch {
-            errorMessage = friendlyMessage(error)
-            return false
+    /// Starts a new team with me as its first member.
+    func startTeam(name: String) async {
+        await onboard {
+            try await $0.rpc("create_team", params: ["my_name": name]).execute()
         }
     }
 
-    func verify(code: String, for email: String) async {
+    /// Joins an existing team using its code.
+    func joinTeam(name: String, code: String) async {
+        await onboard {
+            try await $0.rpc("join_team", params: ["my_name": name, "team_code": code]).execute()
+        }
+    }
+
+    private func onboard(_ action: (SupabaseClient) async throws -> Void) async {
         guard let client else { return }
         errorMessage = nil
         do {
-            try await client.auth.verifyOTP(email: email, token: code, type: .email)
+            // Each Mac gets a silent anonymous account; there is nothing to sign in to.
+            if client.auth.currentSession == nil {
+                _ = try await client.auth.signInAnonymously()
+            }
+            try await action(client)
+            await enterTeamIfMember()
         } catch {
             errorMessage = friendlyMessage(error)
         }
     }
 
-    func signOut() async {
-        guard let client else { return }
-        await leavePresence()
-        try? await client.auth.signOut(scope: .local)
-        await didSignOut()
-    }
-
-    private func didSignIn() async {
-        errorMessage = nil
+    private func enterTeamIfMember() async {
         await reloadTeam()
-        guard me != nil else {
-            // Signed in but the profile could not be read (schema missing or session invalid).
-            phase = .signedOut
-            return
+        if phase == .inTeam {
+            await joinPresence()
         }
-        phase = .signedIn
-        await joinPresence()
     }
 
-    private func didSignOut() async {
+    private func resetToWelcome() async {
         await leavePresence()
         me = nil
         teammates = []
-        pendingInvites = []
+        teamCode = nil
         teamID = nil
         activity = .idle
-        phase = .signedOut
+        phase = .welcome
     }
 
     // MARK: Team
 
-    /// Loads my profile, my teammates and pending invites.
+    /// Loads my profile, my teammates and the team code, and sets the phase.
     /// Row-level security limits the rows to my own team.
     func reloadTeam() async {
-        guard let client, let userID = client.auth.currentSession?.user.id else { return }
+        guard let client, let userID = client.auth.currentSession?.user.id else {
+            phase = .welcome
+            return
+        }
         do {
             let profiles: [ProfileRow] = try await client.from("profiles").select().execute().value
-            let invites: [InviteRow] = try await client.from("invites").select("email")
-                .order("created_at").execute().value
 
-            guard let mine = profiles.first(where: { $0.id == userID }) else {
-                errorMessage = "Your profile was not found. Has the database schema been set up?"
+            guard let mine = profiles.first(where: { $0.id == userID }), let team = mine.teamID else {
+                // No profile yet, or I was removed from the team.
+                if phase == .inTeam { await resetToWelcome() } else { phase = .welcome }
                 return
             }
-            teamID = mine.teamID
+            let teams: [TeamRow] = try await client.from("teams").select("code").execute().value
+
+            teamID = team
+            teamCode = teams.first?.code
             me = Teammate(mine, isOnline: true)
             teammates = profiles
                 .filter { $0.id != userID }
                 .map { Teammate($0, isOnline: onlineIDs.contains($0.id)) }
-            pendingInvites = invites.map(\.email)
+            phase = .inTeam
         } catch {
             errorMessage = friendlyMessage(error)
+            if phase == .loading { phase = .welcome }
         }
     }
 
-    func invite(email: String) async -> Bool {
-        guard let client else { return false }
+    func rename(to name: String) async {
+        await run { try await $0.rpc("set_my_name", params: ["new_name": name]).execute() }
+    }
+
+    func remove(_ teammate: Teammate) async {
+        await run {
+            try await $0.rpc("remove_from_team", params: ["member": teammate.id.uuidString]).execute()
+        }
+    }
+
+    func leaveTeam() async {
+        guard let id = me?.id else { return }
+        await run { try await $0.rpc("remove_from_team", params: ["member": id.uuidString]).execute() }
+    }
+
+    /// Replaces the team code so the old one stops working.
+    func regenerateCode() async {
+        await run { try await $0.rpc("regenerate_team_code").execute() }
+    }
+
+    func copyTeamCode() {
+        guard let teamCode else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(teamCode, forType: .string)
+    }
+
+    private func run(_ action: (SupabaseClient) async throws -> Void) async {
+        guard let client else { return }
         errorMessage = nil
         do {
-            let _: String = try await client
-                .rpc("invite_teammate", params: ["invite_email": email])
-                .execute().value
-            await reloadTeam()
-            return true
-        } catch {
-            errorMessage = friendlyMessage(error)
-            return false
-        }
-    }
-
-    func cancelInvite(email: String) async {
-        guard let client else { return }
-        do {
-            try await client.rpc("cancel_invite", params: ["invite_email": email]).execute()
+            try await action(client)
             await reloadTeam()
         } catch {
             errorMessage = friendlyMessage(error)
         }
-    }
-
-    /// Opens the user's mail app with a ready-to-send invitation.
-    func composeInviteEmail(to email: String) {
-        var components = URLComponents()
-        components.scheme = "mailto"
-        components.path = email
-        components.queryItems = [
-            URLQueryItem(name: "subject", value: "Join me on \(AppInfo.name)"),
-            URLQueryItem(
-                name: "body",
-                value: "I've added you to my team on \(AppInfo.name). "
-                    + "Open the app and sign in with this email address (\(email)) "
-                    + "and you'll land in the team automatically."
-            ),
-        ]
-        if let url = components.url { NSWorkspace.shared.open(url) }
     }
 
     // MARK: Presence
 
     private func joinPresence() async {
         guard let client, let teamID, let userID = me?.id else { return }
-        await leavePresence()
+        guard presenceChannel == nil else { return }
 
         let channel = client.realtimeV2.channel("team:\(teamID.uuidString.lowercased())") {
             $0.presence.key = userID.uuidString.lowercased()
@@ -301,8 +297,7 @@ extension Teammate {
     init(_ row: ProfileRow, isOnline: Bool) {
         self.init(
             id: row.id,
-            name: row.name.isEmpty ? row.email : row.name,
-            email: row.email,
+            name: row.name.isEmpty ? "Teammate" : row.name,
             isOnline: isOnline,
             colorIndex: row.colorIndex
         )
