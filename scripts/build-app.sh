@@ -29,6 +29,16 @@ cp "$BIN" "$APP/Contents/MacOS/TeamPointer"
 sed -e "s/__APP_NAME__/$APP_NAME/g" -e "s/__BUNDLE_ID__/$BUNDLE_ID/g" \
     "$ROOT/Resources/Info.plist" > "$APP/Contents/Info.plist"
 
+# Embed the LiveKit libraries and tell the executable where to find them.
+BIN_DIR="$(dirname "$BIN")"
+mkdir -p "$APP/Contents/Frameworks"
+for framework in "$BIN_DIR"/*.framework; do
+    [[ -d "$framework" ]] || continue
+    cp -R "$framework" "$APP/Contents/Frameworks/"
+    codesign --force --sign - "$APP/Contents/Frameworks/$(basename "$framework")" >/dev/null 2>&1
+done
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/TeamPointer" 2>/dev/null || true
+
 # Bundle the keys (Config.local.json is Git-ignored; see Config.example.json).
 mkdir -p "$APP/Contents/Resources"
 if [[ -f "$ROOT/Config.local.json" ]]; then

@@ -7,13 +7,15 @@ let package = Package(
     name: "TeamPointer",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/supabase/supabase-swift.git", from: "2.0.0")
+        .package(url: "https://github.com/supabase/supabase-swift.git", from: "2.0.0"),
+        .package(url: "https://github.com/livekit/client-sdk-swift.git", from: "2.0.0"),
     ],
     targets: [
         .executableTarget(
             name: "TeamPointer",
             dependencies: [
-                .product(name: "Supabase", package: "supabase-swift")
+                .product(name: "Supabase", package: "supabase-swift"),
+                .product(name: "LiveKit", package: "client-sdk-swift"),
             ],
             path: "Sources/TeamPointer"
         )

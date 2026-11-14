@@ -157,11 +157,25 @@ private struct TeamList: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
 
-            if !team.callMembers.isEmpty {
+            if let incoming = team.incoming {
+                IncomingCallBar(incoming: incoming)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.15)))
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
+            }
+            if team.call != nil {
                 CallBar()
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
+            }
+            if let notice = team.notice {
+                Text(notice)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
             }
 
             VStack(spacing: 0) {
@@ -357,6 +371,7 @@ private struct TeammateRow: View {
 
     private var statusText: String {
         if isTalking { return "Talking…" }
+        if team.isRinging(teammate) { return "Ringing…" }
         if team.isInCall(teammate) { return "In call with you" }
         return teammate.isOnline ? "Online" : "Offline"
     }
@@ -418,10 +433,10 @@ private struct CallBar: View {
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(team.callMembers.map { $0.name.components(separatedBy: " ")[0] }.joined(separator: ", "))
+                Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
-                Text(team.isSharingScreen ? "Sharing your screen" : "In call")
+                Text(status)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -432,19 +447,55 @@ private struct CallBar: View {
                 symbol: team.isMuted ? "mic.slash.fill" : "mic.fill",
                 tint: team.isMuted ? .orange : nil,
                 help: team.isMuted ? "Unmute" : "Mute"
-            ) { team.isMuted.toggle() }
-
-            RoundButton(
-                symbol: "rectangle.inset.filled.and.person.filled",
-                tint: team.isSharingScreen ? .green : nil,
-                help: team.isSharingScreen ? "Stop sharing" : "Share screen"
-            ) { team.isSharingScreen.toggle() }
+            ) { team.toggleMute() }
 
             RoundButton(symbol: "phone.down.fill", tint: .red, help: "Hang up") {
                 team.hangUp()
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var title: String {
+        let names = team.callMembers.map { $0.name.components(separatedBy: " ")[0] }
+        return names.isEmpty ? "Call" : names.joined(separator: ", ")
+    }
+
+    private var status: String {
+        guard let call = team.call else { return "" }
+        if call.isConnecting { return "Connecting…" }
+        if call.connected.isEmpty { return "Ringing…" }
+        return team.isMuted ? "In call · muted" : "In call"
+    }
+}
+
+/// Someone is calling: accept or decline.
+private struct IncomingCallBar: View {
+    @EnvironmentObject private var team: TeamStore
+    let incoming: IncomingCall
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(incoming.fromName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text("is calling you…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            RoundButton(symbol: "phone.down.fill", tint: .red, help: "Decline") {
+                team.declineIncoming()
+            }
+            RoundButton(symbol: "phone.fill", tint: .green, help: "Accept") {
+                team.acceptIncoming()
+            }
+        }
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 }

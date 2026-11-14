@@ -67,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         popover.animates = true
 
+        // An incoming call opens the panel so Accept and Decline are right there.
+        team.onIncomingCall = { [weak self] in self?.showPopover() }
+
         // objectWillChange fires before the value changes, so read it on the next run-loop turn.
         iconUpdates = team.objectWillChange
             .receive(on: RunLoop.main)
@@ -90,19 +93,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // Activate first so text fields in the popover can take keyboard focus.
-            NSApp.activate(ignoringOtherApps: true)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-            watchForOutsideClicks()
-            // Refresh the list each time the panel opens (new or removed teammates).
-            if team.phase == .inTeam {
-                Task { await team.reloadTeam() }
-            }
+            showPopover()
+        }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem.button, !popover.isShown else { return }
+        // Activate first so text fields in the popover can take keyboard focus.
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+        watchForOutsideClicks()
+        // Refresh the list each time the panel opens (new or removed teammates).
+        if team.phase == .inTeam {
+            Task { await team.reloadTeam() }
         }
     }
 
