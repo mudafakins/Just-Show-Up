@@ -5,6 +5,137 @@ struct TeamPanel: View {
     @EnvironmentObject private var team: TeamStore
 
     var body: some View {
+        Group {
+            switch team.phase {
+            case .needsConfig:
+                MessageView(
+                    symbol: "wrench.and.screwdriver",
+                    title: "Setup needed",
+                    detail: "Add your Supabase URL and key to Config.local.json, then rebuild."
+                )
+            case .loading:
+                ProgressView().controlSize(.small).padding(30)
+            case .signedOut:
+                SignInView()
+            case .signedIn:
+                TeamList()
+            }
+        }
+        .frame(width: 280)
+    }
+}
+
+private struct MessageView: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 22)).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 13, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Quit") { NSApplication.shared.terminate(nil) }
+                .controlSize(.small)
+                .padding(.top, 6)
+        }
+        .padding(20)
+    }
+}
+
+/// Email, then the one-time code from the email. No passwords.
+private struct SignInView: View {
+    @EnvironmentObject private var team: TeamStore
+    @State private var email = ""
+    @State private var code = ""
+    @State private var codeSent = false
+    @State private var isWorking = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(AppInfo.name).font(.system(size: 15, weight: .bold))
+
+            if codeSent {
+                Text("Enter the code we emailed to \(email).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextField("Code", text: $code)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(submit)
+                HStack {
+                    Button("Sign In", action: submit)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(code.trimmed.isEmpty || isWorking)
+                    Button("Use a different email") {
+                        codeSent = false
+                        code = ""
+                        team.errorMessage = nil
+                    }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11))
+                }
+            } else {
+                Text("Sign in with your work email. We'll send you a code.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                TextField("you@company.com", text: $email)
+                    .textFieldStyle(.roundedBorder)
+                    .textContentType(.emailAddress)
+                    .onSubmit(submit)
+                Button("Send Code", action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!email.looksLikeEmail || isWorking)
+            }
+
+            ErrorText()
+
+            HStack {
+                Spacer()
+                Button("Quit") { NSApplication.shared.terminate(nil) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+    }
+
+    private func submit() {
+        guard !isWorking else { return }
+        let address = email.trimmed.lowercased()
+        isWorking = true
+        Task {
+            if codeSent {
+                await team.verify(code: code.trimmed, for: address)
+            } else if address.looksLikeEmail {
+                email = address
+                codeSent = await team.sendCode(to: address)
+            }
+            isWorking = false
+        }
+    }
+}
+
+private struct ErrorText: View {
+    @EnvironmentObject private var team: TeamStore
+
+    var body: some View {
+        if let message = team.errorMessage {
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct TeamList: View {
+    @EnvironmentObject private var team: TeamStore
+
+    var body: some View {
         VStack(spacing: 0) {
             if !team.callMembers.isEmpty {
                 CallBar()
@@ -12,16 +143,141 @@ struct TeamPanel: View {
             }
 
             VStack(spacing: 2) {
+                if team.teammates.isEmpty && team.pendingInvites.isEmpty {
+                    Text("No teammates yet. Invite someone to get started.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                }
                 ForEach(team.sortedTeammates) { teammate in
                     TeammateRow(teammate: teammate)
                 }
+                ForEach(team.pendingInvites, id: \.self) { email in
+                    InviteRow_(email: email)
+                }
+                InviteField()
             }
             .padding(6)
+
+            if team.errorMessage != nil {
+                ErrorText()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
 
             Divider()
             Footer()
         }
-        .frame(width: 280)
+        .task { await team.reloadTeam() }
+    }
+}
+
+/// Someone who has been invited but has not signed in yet.
+private struct InviteRow_: View {
+    @EnvironmentObject private var team: TeamStore
+    let email: String
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [3]))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .overlay(Image(systemName: "envelope").font(.system(size: 11)).foregroundStyle(.secondary))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(email).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                Text("Invited").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            if isHovered {
+                Button { team.composeInviteEmail(to: email) } label: {
+                    Image(systemName: "paperplane")
+                }
+                .buttonStyle(.plain)
+                .help("Email them an invitation")
+
+                Button { Task { await team.cancelInvite(email: email) } } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .help("Cancel invite")
+            }
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct InviteField: View {
+    @EnvironmentObject private var team: TeamStore
+    @State private var isEditing = false
+    @State private var email = ""
+    @State private var isWorking = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.primary.opacity(0.08)))
+
+            if isEditing {
+                TextField("teammate@company.com", text: $email)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($isFocused)
+                    .onSubmit(submit)
+                    .onExitCommand { isEditing = false }
+                    .disabled(isWorking)
+            } else {
+                Text("Invite teammate")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isEditing = true
+            isFocused = true
+        }
+    }
+
+    private func submit() {
+        let address = email.trimmed.lowercased()
+        guard address.looksLikeEmail, !isWorking else { return }
+        isWorking = true
+        Task {
+            if await team.invite(email: address) {
+                email = ""
+                isEditing = false
+            }
+            isWorking = false
+        }
+    }
+}
+
+extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var looksLikeEmail: Bool {
+        let parts = trimmed.split(separator: "@", omittingEmptySubsequences: false)
+        return parts.count == 2 && !parts[0].isEmpty && parts[1].contains(".") && !trimmed.contains(" ")
     }
 }
 
@@ -190,11 +446,22 @@ private struct Footer: View {
 
             Spacer(minLength: 0)
 
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-                .buttonStyle(.plain)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .keyboardShortcut("q")
+            Menu {
+                if let me = team.me {
+                    Text(me.email)
+                    Divider()
+                }
+                Button("Sign Out") { Task { await team.signOut() } }
+                Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }
+                    .keyboardShortcut("q")
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
