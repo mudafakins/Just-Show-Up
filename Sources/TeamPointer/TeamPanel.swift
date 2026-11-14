@@ -21,7 +21,7 @@ struct TeamPanel: View {
                 TeamList()
             }
         }
-        .frame(width: 280)
+        .frame(width: 320)
     }
 }
 
@@ -56,7 +56,9 @@ private struct WelcomeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(AppInfo.name).font(.system(size: 15, weight: .bold))
+            Text(AppInfo.name)
+                .font(.system(size: 14, weight: .bold))
+                .frame(maxWidth: .infinity)
 
             TextField("Your name", text: $name)
                 .textFieldStyle(.roundedBorder)
@@ -140,41 +142,123 @@ private struct ErrorText: View {
 
 private struct TeamList: View {
     @EnvironmentObject private var team: TeamStore
+    @State private var search = ""
+
+    private var visibleTeammates: [Teammate] {
+        let query = search.trimmed
+        guard !query.isEmpty else { return team.sortedTeammates }
+        return team.sortedTeammates.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            Header()
+            SearchField(text: $search)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+
             if !team.callMembers.isEmpty {
                 CallBar()
-                Divider()
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06)))
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
             }
 
-            VStack(spacing: 2) {
-                if team.teammates.isEmpty {
-                    Text("No teammates yet. Send them the team code below.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 8)
+            VStack(spacing: 0) {
+                if search.trimmed.isEmpty {
+                    TeamCodeRow()
                 }
-                ForEach(team.sortedTeammates) { teammate in
+                ForEach(visibleTeammates) { teammate in
                     TeammateRow(teammate: teammate)
                 }
-                TeamCodeRow()
+                if visibleTeammates.isEmpty && !search.trimmed.isEmpty {
+                    Text("No teammate matches “\(search.trimmed)”.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                }
             }
-            .padding(6)
+            .padding(.horizontal, 6)
+            .padding(.bottom, 8)
 
             if team.errorMessage != nil {
                 ErrorText()
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
             }
-
-            Divider()
-            Footer()
         }
         .task { await team.reloadTeam() }
+    }
+}
+
+/// Settings gear on the left, app name centred.
+private struct Header: View {
+    @EnvironmentObject private var team: TeamStore
+
+    var body: some View {
+        ZStack {
+            Text(AppInfo.name)
+                .font(.system(size: 14, weight: .bold))
+
+            HStack {
+                Menu {
+                    if let me = team.me {
+                        Text("You: \(me.name)")
+                        Divider()
+                    }
+                    Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
+                    Divider()
+                    Button("Copy Team Code") { team.copyTeamCode() }
+                    Button("New Team Code") { Task { await team.regenerateCode() } }
+                    Button("Leave Team") { Task { await team.leaveTeam() } }
+                    Divider()
+                    Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }
+                        .keyboardShortcut("q")
+                } label: {
+                    Image(systemName: team.doNotDisturb ? "moon.fill" : "gearshape")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Settings")
+
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+}
+
+private struct SearchField: View {
+    @Binding var text: String
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+            TextField("Find Teammates", text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .focused($isFocused)
+        }
+        .padding(.horizontal, 11)
+        .frame(height: 34)
+        .background(Capsule().fill(Color.primary.opacity(0.06)))
+        .overlay(
+            Capsule().strokeBorder(
+                isFocused ? Color.accentColor.opacity(0.8) : Color.primary.opacity(0.12),
+                lineWidth: isFocused ? 2 : 1
+            )
+        )
     }
 }
 
@@ -185,30 +269,23 @@ private struct TeamCodeRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: copied ? "checkmark" : "plus")
-                .font(.system(size: 11, weight: .semibold))
+        HStack(spacing: 12) {
+            Image(systemName: copied ? "checkmark" : "person.badge.plus")
+                .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(Color.primary.opacity(0.08)))
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(Color.primary.opacity(0.1)))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(copied ? "Copied" : "Invite with team code")
+                Text(copied ? "Code Copied" : "Invite Teammates")
+                    .font(.system(size: 15, weight: .medium))
+                Text(team.teamCode.map { "Team code \($0)" } ?? "…")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                Text(team.teamCode ?? "…")
-                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
-        )
-        .contentShape(Rectangle())
+        .rowStyle(isHovered: isHovered)
         .onHover { isHovered = $0 }
         .onTapGesture {
             team.copyTeamCode()
@@ -219,6 +296,20 @@ private struct TeamCodeRow: View {
             }
         }
         .help("Click to copy the code, then send it to a teammate")
+    }
+}
+
+private extension View {
+    /// Shared padding and hover highlight for every row in the list.
+    func rowStyle(isHovered: Bool) -> some View {
+        self
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
+            )
+            .contentShape(Rectangle())
     }
 }
 
@@ -234,14 +325,15 @@ private struct TeammateRow: View {
     private var isTalking: Bool { team.talkingTo == teammate.id }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Avatar(teammate: teammate)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(teammate.name)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
+                    .lineLimit(1)
                 Text(statusText)
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
 
@@ -251,14 +343,8 @@ private struct TeammateRow: View {
                 TalkButton(teammate: teammate)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(isHovered && teammate.isOnline ? Color.primary.opacity(0.08) : .clear)
-        )
-        .contentShape(Rectangle())
-        .opacity(teammate.isOnline ? 1 : 0.45)
+        .rowStyle(isHovered: isHovered && teammate.isOnline)
+        .opacity(teammate.isOnline ? 1 : 0.5)
         .onHover { isHovered = $0 }
         .onTapGesture { team.call(teammate) }
         .help(teammate.isOnline ? "Click to call \(teammate.name)" : "\(teammate.name) is offline")
@@ -287,7 +373,7 @@ private struct TalkButton: View {
         Image(systemName: "dot.radiowaves.left.and.right")
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(isTalking ? Color.white : Color.secondary)
-            .frame(width: 26, height: 26)
+            .frame(width: 30, height: 30)
             .background(Circle().fill(isTalking ? Color.red : Color.primary.opacity(0.1)))
             .scaleEffect(isTalking ? 1.15 : 1)
             .animation(.easeOut(duration: 0.12), value: isTalking)
@@ -309,17 +395,17 @@ private struct Avatar: View {
         ZStack(alignment: .bottomTrailing) {
             Circle()
                 .fill(teammate.color.gradient)
-                .frame(width: 28, height: 28)
+                .frame(width: 40, height: 40)
                 .overlay(
                     Text(teammate.initials)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                 )
             if teammate.isOnline {
                 Circle()
                     .fill(.green)
-                    .frame(width: 8, height: 8)
-                    .overlay(Circle().stroke(.background, lineWidth: 1.5))
+                    .frame(width: 11, height: 11)
+                    .overlay(Circle().stroke(.background, lineWidth: 2))
             }
         }
     }
@@ -382,41 +468,3 @@ private struct RoundButton: View {
     }
 }
 
-private struct Footer: View {
-    @EnvironmentObject private var team: TeamStore
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Toggle(isOn: $team.doNotDisturb) {
-                Label("Do Not Disturb", systemImage: "moon.fill")
-                    .font(.system(size: 11))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-
-            Spacer(minLength: 0)
-
-            Menu {
-                if let me = team.me {
-                    Text("You: \(me.name)")
-                    Divider()
-                }
-                Button("Copy Team Code") { team.copyTeamCode() }
-                Button("New Team Code") { Task { await team.regenerateCode() } }
-                Button("Leave Team") { Task { await team.leaveTeam() } }
-                Divider()
-                Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }
-                    .keyboardShortcut("q")
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-    }
-}
