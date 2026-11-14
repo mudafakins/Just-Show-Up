@@ -1,0 +1,12 @@
+.build/
+build/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+
+# Secrets (LiveKit and Supabase keys) never go into Git
+Config.local.*
+*.local.plist
+.env
+.env.*
