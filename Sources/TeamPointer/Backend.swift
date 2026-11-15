@@ -17,21 +17,6 @@ struct AppConfig: Decodable {
     }
 }
 
-/// "Test teammate" mode: a second copy of the app on the same Mac that joins the team
-/// as its own person and answers calls by itself, so one Mac can try everything.
-/// Started from the gear menu, which launches the app again with these arguments.
-enum TestTeammate {
-    static let isActive = CommandLine.arguments.contains("--dummy")
-    static let name = "Test Buddy"
-
-    /// The team code passed with `--join CODE`.
-    static var joinCode: String? {
-        let arguments = CommandLine.arguments
-        guard let index = arguments.firstIndex(of: "--join"), index + 1 < arguments.count else { return nil }
-        return arguments[index + 1]
-    }
-}
-
 enum AppInfo {
     static var name: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Just Show Up!"
@@ -46,9 +31,7 @@ struct FileSessionStorage: AuthLocalStorage {
 
     init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        // The test teammate keeps its own identity, separate from the real one on this Mac.
-        let folder = TestTeammate.isActive ? "JustShowUp/session-test-teammate" : "JustShowUp/session"
-        directory = base.appendingPathComponent(folder, isDirectory: true)
+        directory = base.appendingPathComponent("JustShowUp/session", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]

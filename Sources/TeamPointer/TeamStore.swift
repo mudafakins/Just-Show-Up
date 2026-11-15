@@ -148,7 +148,6 @@ final class TeamStore: ObservableObject {
                     } else {
                         self.phase = .welcome
                     }
-                    await self.joinAsTestTeammateIfNeeded()
                 case .signedOut:
                     await self.resetToWelcome()
                 default:
@@ -172,13 +171,6 @@ final class TeamStore: ObservableObject {
         await onboard {
             try await $0.rpc("join_team", params: ["my_name": name, "team_code": code]).execute()
         }
-    }
-
-    /// In test-teammate mode, join (or move to) the team whose code was passed at launch.
-    private func joinAsTestTeammateIfNeeded() async {
-        guard TestTeammate.isActive, let code = TestTeammate.joinCode else { return }
-        if phase == .inTeam, teamCode == code { return }
-        await joinTeam(name: TestTeammate.name, code: code)
     }
 
     private func onboard(_ action: (SupabaseClient) async throws -> Void) async {
@@ -373,17 +365,6 @@ final class TeamStore: ObservableObject {
             teammates[index].isOnline = onlineIDs.contains(teammates[index].id)
         }
 
-        // The test teammate follows people into whichever room is busy, and leaves when alone.
-        if TestTeammate.isActive {
-            let busy = Rooms.numbers.first { number in roomMembers.values.contains(number) }
-            if call == nil, let busy {
-                joinRoom(busy)
-            } else if let mine = call?.number, call?.isConnecting == false,
-                      !roomMembers.values.contains(mine)
-            {
-                leaveRoom()
-            }
-        }
     }
 
     // MARK: Rooms
@@ -431,9 +412,8 @@ final class TeamStore: ObservableObject {
         Task {
             if switching { await engine.disconnect() }
             guard await joinAudio(room: room) else { return }
-            // Two copies on one Mac share a microphone and speakers; muting one avoids a feedback howl.
-            if TestTeammate.isActive, !isMuted { toggleMute() }
-            if !TestTeammate.isActive, isMuted { await engine.setMuted(true) }
+            // Keep my mute setting when moving between rooms.
+            if isMuted { await engine.setMuted(true) }
             await updatePresence()
         }
     }
@@ -611,11 +591,6 @@ final class TeamStore: ObservableObject {
             if call?.number == number { return }
             if doNotDisturb {
                 await send(.busy, to: signal.from, roomNumber: number)
-                return
-            }
-            if TestTeammate.isActive {
-                try? await Task.sleep(for: .seconds(1))
-                joinRoom(number)
                 return
             }
             incomingRing = IncomingRing(from: signal.from, fromName: name, roomNumber: number)

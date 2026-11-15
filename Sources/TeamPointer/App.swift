@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Drawn as text so it follows the menu bar's light/dark colour.
         button.image = nil
         button.font = NSFont.systemFont(ofSize: 14)
-        button.title = TestTeammate.isActive ? "✦T" : "✦✦"
+        button.title = "✦✦"
         button.setAccessibilityLabel(AppInfo.name)
     }
 

@@ -231,7 +231,7 @@ private struct Header: View {
 
     var body: some View {
         ZStack {
-            Text(TestTeammate.isActive ? "\(TestTeammate.name) (test)" : AppInfo.name)
+            Text(AppInfo.name)
                 .font(.system(size: 14, weight: .bold))
 
             HStack {
