@@ -1,0 +1,21 @@
+{
+  "name": "just-show-up-windows",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
+    "@tauri-apps/api": "^2.12.4",
+    "livekit-client": "^2.24.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  }
+}

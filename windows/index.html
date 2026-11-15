@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Just Show Up!</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="panel"></div>
+    <div id="viewer" hidden>
+      <div id="viewer-stage">
+        <video id="viewer-video" autoplay playsinline muted></video>
+        <canvas id="viewer-ink"></canvas>
+      </div>
+      <div id="viewer-controls">
+        <button id="viewer-pin" class="chip" title="Keep drawings until cleared"></button>
+        <button id="viewer-clear" class="chip" title="Clear all drawings">Clear</button>
+      </div>
+    </div>
+    <div id="audio" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
