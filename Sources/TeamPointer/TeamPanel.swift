@@ -163,23 +163,28 @@ private struct TeamList: View {
                     .padding(.bottom, 6)
             }
 
-            if let invite = team.roomInvite, !team.isInRoom {
-                RoomInviteBar(invite: invite)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.18)))
+            if let ring = team.incomingRing {
+                RingBar(ring: ring)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.2)))
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
             }
 
-            // The team room: a join row when I'm outside, the controls when I'm inside.
-            if team.isInRoom {
-                CallBar()
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.14)))
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-            } else {
-                TeamRoomRow()
-                    .padding(.horizontal, 6)
+            // The rooms: controls for the one I'm in, a join row for the others.
+            ForEach(Rooms.numbers, id: \.self) { number in
+                if team.call?.number == number {
+                    CallBar()
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.14)))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 1)
+                } else {
+                    RoomRow(number: number)
+                        .padding(.horizontal, 6)
+                }
             }
+            Divider()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
             if let notice = team.notice {
                 Text(notice)
                     .font(.system(size: 11))
@@ -239,10 +244,6 @@ private struct Header: View {
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Divider()
-                    if !TestTeammate.isActive {
-                        Button("Open Test Teammate") { team.openTestTeammate() }
-                        Divider()
-                    }
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }
                     Button("Leave Team") { Task { await team.leaveTeam() } }
@@ -385,48 +386,51 @@ private struct TeamCodeRow: View {
     }
 }
 
-/// The always-open voice room. Click to drop in; nobody gets rung.
-private struct TeamRoomRow: View {
+/// One always-open voice room. Click to drop in; nobody gets rung.
+private struct RoomRow: View {
     @EnvironmentObject private var team: TeamStore
+    let number: Int
     @State private var isHovered = false
 
-    private var inside: [Teammate] { team.roomTeammates }
+    private var inside: [Teammate] { team.teammates(in: number) }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(inside.isEmpty ? Color.secondary : Color.white)
-                .frame(width: 40, height: 40)
+                .frame(width: 30, height: 30)
                 .background(Circle().fill(inside.isEmpty ? Color.primary.opacity(0.1) : Color.green))
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Team Room")
-                    .font(.system(size: 15, weight: .medium))
+            VStack(alignment: .leading, spacing: 0) {
+                Text(Rooms.name(number))
+                    .font(.system(size: 13, weight: .medium))
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
 
-            Text("Join")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Color.green))
+            if isHovered || !inside.isEmpty {
+                JoinRoomButton(number: number)
+            }
         }
-        .rowStyle(isHovered: isHovered)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
+        )
+        .contentShape(Rectangle())
         .onHover { isHovered = $0 }
-        .onTapGesture { team.joinRoom() }
-        .help("Join the team's voice room")
+        .onTapGesture { team.joinRoom(number) }
+        .help("Join \(Rooms.name(number))")
     }
 
     private var subtitle: String {
-        if inside.isEmpty { return "Empty · drop in any time" }
-        let names = inside.map { $0.name.components(separatedBy: " ")[0] }
-        return names.joined(separator: ", ") + (inside.count == 1 ? " is inside" : " are inside")
+        if inside.isEmpty { return "Empty" }
+        return inside.map { $0.name.components(separatedBy: " ")[0] }.joined(separator: ", ")
     }
 }
 
@@ -453,8 +457,6 @@ private struct TeammateRow: View {
     let teammate: Teammate
     @State private var isHovered = false
 
-    private var isTalking: Bool { team.talkingTo == teammate.id }
-
     var body: some View {
         HStack(spacing: 12) {
             Avatar(teammate: teammate)
@@ -470,26 +472,22 @@ private struct TeammateRow: View {
 
             Spacer(minLength: 0)
 
-            if canJoinThem {
-                // They're in the team room: the button takes me in with them.
-                JoinRoomButton()
-            } else if canCallIn {
-                // I'm in the room and they aren't: ask them to come in.
-                CallInButton(teammate: teammate)
-            } else if teammate.isOnline, !team.isInRoom,
-                      isHovered || isTalking || team.walkiePeer == teammate.id
-            {
-                TalkButton(teammate: teammate)
+            if let theirs = joinableRoom {
+                // They're in a room I'm not in: one click takes me there.
+                JoinRoomButton(number: theirs)
+            }
+            if canRing {
+                RingButton(teammate: teammate)
             }
         }
-        .rowStyle(isHovered: isHovered && (canJoinThem || isSharing))
+        .rowStyle(isHovered: isHovered && (joinableRoom != nil || isSharing))
         .opacity(teammate.isOnline ? 1 : 0.5)
         .onHover { isHovered = $0 }
         .onTapGesture {
             if isSharing {
                 team.showSharedScreen(of: teammate)
-            } else if canJoinThem {
-                team.joinRoom()
+            } else if let theirs = joinableRoom {
+                team.joinRoom(theirs)
             }
         }
         .help(helpText)
@@ -501,100 +499,89 @@ private struct TeammateRow: View {
     }
 
     private var isSharing: Bool { team.sharingTeammates.contains(teammate.id) }
-    /// They're in the room and I'm not: clicking their name drops me in with them.
-    private var canJoinThem: Bool { !team.isInRoom && team.isInRoom(teammate) }
-    /// I'm in the room, they're online and outside it.
-    private var canCallIn: Bool { team.isInRoom && teammate.isOnline && !team.isInRoom(teammate) }
+    private var theirRoom: Int? { team.room(of: teammate) }
+    /// The room they're in, when it isn't mine.
+    private var joinableRoom: Int? {
+        guard let theirRoom, theirRoom != team.call?.number else { return nil }
+        return theirRoom
+    }
+    private var canRing: Bool { teammate.isOnline && !team.isInMyRoom(teammate) }
 
     private var helpText: String {
         if !teammate.isOnline { return "\(teammate.name) is offline" }
         if isSharing { return "Click to view \(teammate.name)'s screen" }
-        if canJoinThem { return "Click to join \(teammate.name) in the team room" }
-        if canCallIn { return "Click Call In to ask \(teammate.name) to join the room" }
-        return "Click the button on the right to talk to \(teammate.name)"
+        if let room = joinableRoom { return "Click to join \(teammate.name) in \(Rooms.name(room))" }
+        if team.isInMyRoom(teammate) { return "\(teammate.name) is in the room with you" }
+        if team.isInRoom { return "Ring \(teammate.name) to ask them into your room" }
+        return "Ring \(teammate.name) to get their attention"
     }
 
     private var statusText: String {
-        if isTalking { return team.walkieReady ? "Talking · click the red button to stop" : "Connecting…" }
-        if team.walkiePeer == teammate.id {
-            return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · click to reply"
-        }
         if isSharing { return "Sharing their screen · click to view" }
-        if team.invitedTeammates.contains(teammate.id) { return "Calling them into the room…" }
-        if team.isInRoom(teammate) {
-            if team.isInRoom { return team.speaking.contains(teammate.id) ? "Speaking…" : "In the room with you" }
-            return "In the team room · click to join"
+        if team.ringingTeammates.contains(teammate.id) { return "Ringing…" }
+        if team.isInMyRoom(teammate) {
+            return team.speaking.contains(teammate.id) ? "Speaking…" : "In the room with you"
         }
+        if let theirRoom { return "In \(Rooms.name(theirRoom))" }
         return teammate.isOnline ? "Online" : "Offline"
     }
 }
 
-/// Shown on a teammate's row when I'm in the room and they aren't.
-private struct CallInButton: View {
+/// A teammate rang me: into their room (Join / Not now) or just for attention (OK).
+private struct RingBar: View {
     @EnvironmentObject private var team: TeamStore
-    let teammate: Teammate
-
-    private var isCalling: Bool { team.invitedTeammates.contains(teammate.id) }
-
-    var body: some View {
-        Button { team.callIntoRoom(teammate) } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "phone.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                Text(isCalling ? "Calling…" : "Call In")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(isCalling ? Color.secondary : Color.white)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(isCalling ? Color.primary.opacity(0.1) : Color.blue))
-        }
-        .buttonStyle(.plain)
-        .disabled(isCalling)
-        .help("Ask \(teammate.name) to join you in the team room")
-    }
-}
-
-/// Someone in the room is calling me in.
-private struct RoomInviteBar: View {
-    @EnvironmentObject private var team: TeamStore
-    let invite: RoomInvite
+    let ring: IncomingRing
 
     var body: some View {
         HStack(spacing: 8) {
+            Image(systemName: "bell.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 1) {
-                Text(invite.fromName)
+                Text(ring.fromName)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
-                Text("is calling you into the Team Room")
+                Text(ring.roomNumber.map { "is ringing you into \(Rooms.name($0))" } ?? "is ringing you")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Button("Not now") { team.dismissRoomInvite() }
-                .buttonStyle(.link)
-                .font(.system(size: 11))
-            Button { team.acceptRoomInvite() } label: {
-                Text("Join")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.green))
+            if ring.roomNumber != nil {
+                Button("Not now") { team.dismissRing() }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11))
+                Button { team.acceptRing() } label: {
+                    Text("Join")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.green))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button { team.dismissRing() } label: {
+                    Text("OK")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.primary.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
 }
 
-/// Shown on a teammate's row when they're in the team room.
+/// Green Join button for a room.
 private struct JoinRoomButton: View {
     @EnvironmentObject private var team: TeamStore
+    let number: Int
 
     var body: some View {
-        Button { team.joinRoom() } label: {
+        Button { team.joinRoom(number) } label: {
             Text("Join")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white)
@@ -603,31 +590,30 @@ private struct JoinRoomButton: View {
                 .background(Capsule().fill(Color.green))
         }
         .buttonStyle(.plain)
-        .help("Join them in the team room")
+        .help("Join \(Rooms.name(number))")
     }
 }
 
-/// Walkie-talkie: click to talk, click again to stop.
-private struct TalkButton: View {
+/// Rings a teammate: into my room if I'm in one, otherwise just for their attention.
+private struct RingButton: View {
     @EnvironmentObject private var team: TeamStore
     let teammate: Teammate
 
-    private var isTalking: Bool { team.talkingTo == teammate.id }
+    private var isRinging: Bool { team.ringingTeammates.contains(teammate.id) }
 
     var body: some View {
-        Button {
-            team.toggleTalking(to: teammate)
-        } label: {
-            Image(systemName: isTalking ? "phone.down.fill" : "phone.fill")
+        Button { team.ring(teammate) } label: {
+            Image(systemName: isRinging ? "bell.and.waves.left.and.right.fill" : "bell.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isTalking ? Color.white : Color.secondary)
+                .foregroundStyle(isRinging ? Color.white : Color.secondary)
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(isTalking ? Color.red : Color.primary.opacity(0.1)))
-                .scaleEffect(isTalking ? 1.15 : 1)
-                .animation(.easeOut(duration: 0.12), value: isTalking)
+                .background(Circle().fill(isRinging ? Color.orange : Color.primary.opacity(0.1)))
         }
         .buttonStyle(.plain)
-        .help(isTalking ? "Click to stop talking" : "Click to talk to \(teammate.name)")
+        .disabled(isRinging)
+        .help(team.isInRoom
+              ? "Ring \(teammate.name) into \(Rooms.name(team.call?.number ?? 1))"
+              : "Ring \(teammate.name) to get their attention")
     }
 }
 
@@ -701,14 +687,14 @@ private struct CallBar: View {
         .padding(.vertical, 10)
     }
 
-    private var title: String { "Team Room" }
+    private var title: String { team.call.map { Rooms.name($0.number) } ?? "Room" }
 
     private var status: String {
         guard let call = team.call else { return "" }
         if call.isConnecting { return "Connecting…" }
         if team.isDrawingOnOwnScreen { return "Drawing · Esc to stop" }
         if team.isSharingScreen { return "Sharing your screen" }
-        let names = team.roomTeammates.map { $0.name.components(separatedBy: " ")[0] }
+        let names = team.teammates(in: call.number).map { $0.name.components(separatedBy: " ")[0] }
         let who = names.isEmpty ? "Just you so far" : "With " + names.joined(separator: ", ")
         return team.isMuted ? who + " · muted" : who
     }

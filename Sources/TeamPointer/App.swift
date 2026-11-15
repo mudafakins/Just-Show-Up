@@ -66,8 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         popover.animates = true
 
-        // Being called into the room opens the panel so Join is right there.
-        team.onRoomInvite = { [weak self] in self?.showPopover() }
+        // Being rung opens the panel so the ring is right there.
+        team.onRing = { [weak self] in self?.showPopover() }
 
     }
 

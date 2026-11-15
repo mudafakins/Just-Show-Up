@@ -50,8 +50,7 @@ final class CallEngine {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    /// `microphone: false` joins silently (used by the walkie-talkie's listening side).
-    func connect(url: String, token: String, microphone: Bool = true) async throws {
+    func connect(url: String, token: String) async throws {
         let relay = Relay(engine: self)
         let room = Room(delegate: relay, roomOptions: RoomOptions(
             // Echo cancellation, noise suppression and automatic gain run through macOS's own
@@ -75,13 +74,10 @@ final class CallEngine {
         self.room = room
         try await room.connect(url: url, token: token)
         myID = room.localParticipant.identity.flatMap { UUID(uuidString: $0.stringValue) }
-        if microphone {
-            try await room.localParticipant.setMicrophone(enabled: true)
-        }
+        try await room.localParticipant.setMicrophone(enabled: true)
         reportParticipants()
     }
 
-    var isConnected: Bool { room != nil }
 
     func setMuted(_ muted: Bool) async {
         _ = try? await room?.localParticipant.setMicrophone(enabled: !muted)

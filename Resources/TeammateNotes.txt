@@ -23,7 +23,7 @@ Needs: an Apple Silicon Mac (M1 or newer) running macOS 14 or later.
    still on it and can skip this.
 
 Permissions (macOS asks the first time you use each feature):
-  - Microphone: allow it the first time you join the Team Room.
+  - Microphone: allow it the first time you join a room.
   - Screen Recording: needed only to share YOUR screen. In the room,
     click the share button, choose "1. Allow Screen Recording...",
     switch the app on in System Settings, then choose "2. Restart App"
@@ -35,19 +35,16 @@ System Settings > Privacy & Security > Screen & System Audio Recording,
 then quit and reopen the app.
 
 How to use it:
-  - Team Room: click "Join" to drop into the team's voice room. Nobody
-    is rung; teammates see that you are inside and can join you. Click
-    the red button to leave.
-  - Clicking a teammate who is in the room also takes you in.
-  - In the room, click "Call In" next to a teammate to ask them to join.
-    They hear one chime and get Join / Not now.
-  - Walkie-talkie: click the phone button on the right of a teammate's
-    row to talk to them instantly. If they are in the Team Room, that
-    button says "Join" and takes you into the room instead. Wait for the short chirp, then speak.
-    Click the button again to stop (it also stops by itself after
-    3 minutes).
-  - Less background noise: while your microphone is in use, open
-    Control Center, click Mic Mode and choose Voice Isolation.
-  - In the room, use the share button to share a screen or one window.
+  - Rooms: the team has three always-open voice rooms, Room 1, Room 2
+    and Room 3. Click one to join; nobody is rung. Everyone can see who
+    is in which room. Click the red button to leave.
+  - A teammate in another room shows a green "Join" button that takes
+    you to them.
+  - Ring: the bell button on a teammate's row gets their attention with
+    two chimes. If you are in a room, it asks them to join you there
+    (they get Join / Not now).
+  - In a room, use the share button to share a screen or one window.
   - When a teammate shares, drag in the window that opens to draw on
     their screen.
+  - Less background noise: while your microphone is in use, open
+    Control Center, click Mic Mode and choose Voice Isolation.
