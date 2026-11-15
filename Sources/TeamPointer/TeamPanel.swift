@@ -463,8 +463,11 @@ private struct TeammateRow: View {
 
             Spacer(minLength: 0)
 
-            if teammate.isOnline, team.call == nil,
-               isHovered || isTalking || team.walkiePeer == teammate.id
+            if canJoinThem {
+                // They're in the team room: the button takes me in with them.
+                JoinRoomButton()
+            } else if teammate.isOnline, !team.isInRoom,
+                      isHovered || isTalking || team.walkiePeer == teammate.id
             {
                 TalkButton(teammate: teammate)
             }
@@ -500,7 +503,7 @@ private struct TeammateRow: View {
     }
 
     private var statusText: String {
-        if isTalking { return team.walkieReady ? "Talking · click ■ to stop" : "Connecting…" }
+        if isTalking { return team.walkieReady ? "Talking · click the red button to stop" : "Connecting…" }
         if team.walkiePeer == teammate.id {
             return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · click to reply"
         }
@@ -510,6 +513,24 @@ private struct TeammateRow: View {
             return "In the team room · click to join"
         }
         return teammate.isOnline ? "Online" : "Offline"
+    }
+}
+
+/// Shown on a teammate's row when they're in the team room.
+private struct JoinRoomButton: View {
+    @EnvironmentObject private var team: TeamStore
+
+    var body: some View {
+        Button { team.joinRoom() } label: {
+            Text("Join")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.green))
+        }
+        .buttonStyle(.plain)
+        .help("Join them in the team room")
     }
 }
 
@@ -524,7 +545,7 @@ private struct TalkButton: View {
         Button {
             team.toggleTalking(to: teammate)
         } label: {
-            Image(systemName: isTalking ? "stop.fill" : "dot.radiowaves.left.and.right")
+            Image(systemName: isTalking ? "phone.down.fill" : "phone.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(isTalking ? Color.white : Color.secondary)
                 .frame(width: 30, height: 30)
