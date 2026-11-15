@@ -50,7 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let team = TeamStore()
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
-    private var iconUpdates: AnyCancellable?
     private var outsideClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -70,26 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Being called into the room opens the panel so Join is right there.
         team.onRoomInvite = { [weak self] in self?.showPopover() }
 
-        // objectWillChange fires before the value changes, so read it on the next run-loop turn.
-        iconUpdates = team.objectWillChange
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.updateIcon() }
     }
 
+    /// The menu bar always shows the app's mark, whatever the app is doing.
     private func updateIcon() {
         guard let button = statusItem.button else { return }
-        if let symbol = team.menuBarSymbol {
-            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: AppInfo.name)
-            image?.isTemplate = true
-            button.image = image
-            button.title = ""
-        } else {
-            // The app's mark. Drawn as text so it follows the menu bar's light/dark colour.
-            button.image = nil
-            button.font = NSFont.systemFont(ofSize: 14)
-            button.title = TestTeammate.isActive ? "✦T" : "✦✦"
-            button.setAccessibilityLabel(AppInfo.name)
-        }
+        // Drawn as text so it follows the menu bar's light/dark colour.
+        button.image = nil
+        button.font = NSFont.systemFont(ofSize: 14)
+        button.title = TestTeammate.isActive ? "✦T" : "✦✦"
+        button.setAccessibilityLabel(AppInfo.name)
     }
 
     @objc private func togglePopover() {
