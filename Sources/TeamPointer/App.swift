@@ -67,6 +67,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.delegate = self
         popover.animates = true
 
+        // Being called into the room opens the panel so Join is right there.
+        team.onRoomInvite = { [weak self] in self?.showPopover() }
+
         // objectWillChange fires before the value changes, so read it on the next run-loop turn.
         iconUpdates = team.objectWillChange
             .receive(on: RunLoop.main)

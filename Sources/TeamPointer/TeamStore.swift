@@ -9,11 +9,21 @@ struct CallState: Equatable {
     var isConnecting = true
 }
 
-/// Sent between teammates over the team channel for the walkie-talkie.
-/// (The ring/cancel/decline/busy kinds belong to older builds and are ignored.)
+/// Someone in the team room is asking me to come in.
+struct RoomInvite: Equatable {
+    let from: UUID
+    let fromName: String
+}
+
+/// Sent between teammates over the team channel.
 struct CallSignal: Codable {
     enum Kind: String, Codable {
-        case ring, cancel, decline, busy
+        /// `ring` and `cancel` belong to older builds and are ignored.
+        case ring, cancel
+        /// Replies to a room invite: "not now" and "on Do Not Disturb".
+        case decline, busy
+        /// "Come into the team room."
+        case invite
         /// "I'm about to talk to you" and "I can't listen right now".
         case talk, talkBusy
     }
@@ -54,6 +64,12 @@ final class TeamStore: ObservableObject {
     @Published var call: CallState?
     /// Teammates who are in the team room right now (known even when I'm not in it).
     @Published var roomMembers: Set<UUID> = []
+    /// Teammates I've called into the room who haven't arrived or answered yet.
+    @Published var invitedTeammates: Set<UUID> = []
+    /// Someone is calling me into the room.
+    @Published var roomInvite: RoomInvite?
+    /// Lets the app delegate open the panel when someone calls me into the room.
+    var onRoomInvite: (() -> Void)?
     /// A short neutral message such as "Maya declined".
     @Published var notice: String?
     @Published var doNotDisturb = false
@@ -99,6 +115,7 @@ final class TeamStore: ObservableObject {
         engine.onParticipantsChanged = { [weak self] ids in
             guard let self, self.call != nil else { return }
             self.call?.connected = ids
+            self.invitedTeammates.subtract(ids)
         }
         engine.onRemoteSharesChanged = { [weak self] ids in self?.sharingTeammates = ids }
         engine.onLocalShareStopped = { [weak self] in
@@ -370,6 +387,9 @@ final class TeamStore: ObservableObject {
         onlineIDs.formUnion(joined.map(\.id))
         roomMembers.formUnion(joined.filter(\.inRoom).map(\.id))
         if let myID = me?.id { roomMembers.remove(myID) }
+        invitedTeammates.subtract(roomMembers)
+        // The person who called me in went offline or left the room.
+        if let invite = roomInvite, !roomMembers.contains(invite.from) { roomInvite = nil }
 
         // Someone we don't know yet came online: a new teammate just joined.
         let known = Set(teammates.map(\.id)).union([me?.id].compactMap { $0 })
@@ -426,6 +446,7 @@ final class TeamStore: ObservableObject {
 
     func joinRoom() {
         guard call == nil, let teamID else { return }
+        roomInvite = nil
         notice = nil
         errorMessage = nil
         let room = "\(teamID.uuidString.lowercased()):room"
@@ -471,12 +492,43 @@ final class TeamStore: ObservableObject {
     func leaveRoom() {
         guard call != nil else { return }
         call = nil
+        invitedTeammates = []
         isMuted = false
         isSharingScreen = false
         Task {
             await engine.disconnect()
             await updatePresence()
         }
+    }
+
+    // MARK: Calling someone into the room
+
+    /// Asks a teammate to join me in the room. They hear one chime and see Join / Not now.
+    func callIntoRoom(_ teammate: Teammate) {
+        guard let call, teammate.isOnline, !isInRoom(teammate),
+              !invitedTeammates.contains(teammate.id)
+        else { return }
+        invitedTeammates.insert(teammate.id)
+        notice = nil
+        let room = call.room
+        Task {
+            await send(.invite, to: teammate.id, room: room)
+            try? await Task.sleep(for: .seconds(30))
+            guard invitedTeammates.contains(teammate.id) else { return }
+            invitedTeammates.remove(teammate.id)
+            notice = "\(teammate.name) didn't join."
+        }
+    }
+
+    func acceptRoomInvite() {
+        joinRoom()
+    }
+
+    func dismissRoomInvite() {
+        guard let invite = roomInvite, let teamID else { return }
+        roomInvite = nil
+        let room = "\(teamID.uuidString.lowercased()):room"
+        Task { await send(.decline, to: invite.from, room: room) }
     }
 
     func toggleMute() {
@@ -566,7 +618,32 @@ final class TeamStore: ObservableObject {
             await closeWalkie()
             notice = "\(name) can't listen right now."
 
-        case .ring, .cancel, .decline, .busy:
+        case .invite:
+            guard call == nil else { return }
+            if doNotDisturb {
+                await send(.busy, to: signal.from, room: signal.room)
+                return
+            }
+            if TestTeammate.isActive {
+                joinRoom()
+                return
+            }
+            roomInvite = RoomInvite(from: signal.from, fromName: name)
+            NSSound(named: "Glass")?.play()
+            onRoomInvite?()
+            // Clear the invite by itself if it's ignored.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(45))
+                guard let self, self.roomInvite?.from == signal.from else { return }
+                self.roomInvite = nil
+            }
+
+        case .decline, .busy:
+            guard invitedTeammates.contains(signal.from) else { return }
+            invitedTeammates.remove(signal.from)
+            notice = signal.kind == .busy ? "\(name) is on Do Not Disturb." : "\(name) can't join right now."
+
+        case .ring, .cancel:
             // From an older build that still rings; this build has the open room instead.
             break
         }

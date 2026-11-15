@@ -39,6 +39,8 @@ How to use it:
     is rung; teammates see that you are inside and can join you. Click
     the red button to leave.
   - Clicking a teammate who is in the room also takes you in.
+  - In the room, click "Call In" next to a teammate to ask them to join.
+    They hear one chime and get Join / Not now.
   - Walkie-talkie: click the phone button on the right of a teammate's
     row to talk to them instantly. If they are in the Team Room, that
     button says "Join" and takes you into the room instead. Wait for the short chirp, then speak.

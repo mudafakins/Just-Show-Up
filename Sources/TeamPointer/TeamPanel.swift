@@ -163,6 +163,13 @@ private struct TeamList: View {
                     .padding(.bottom, 6)
             }
 
+            if let invite = team.roomInvite, !team.isInRoom {
+                RoomInviteBar(invite: invite)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.18)))
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
+            }
+
             // The team room: a join row when I'm outside, the controls when I'm inside.
             if team.isInRoom {
                 CallBar()
@@ -466,6 +473,9 @@ private struct TeammateRow: View {
             if canJoinThem {
                 // They're in the team room: the button takes me in with them.
                 JoinRoomButton()
+            } else if canCallIn {
+                // I'm in the room and they aren't: ask them to come in.
+                CallInButton(teammate: teammate)
             } else if teammate.isOnline, !team.isInRoom,
                       isHovered || isTalking || team.walkiePeer == teammate.id
             {
@@ -493,12 +503,14 @@ private struct TeammateRow: View {
     private var isSharing: Bool { team.sharingTeammates.contains(teammate.id) }
     /// They're in the room and I'm not: clicking their name drops me in with them.
     private var canJoinThem: Bool { !team.isInRoom && team.isInRoom(teammate) }
+    /// I'm in the room, they're online and outside it.
+    private var canCallIn: Bool { team.isInRoom && teammate.isOnline && !team.isInRoom(teammate) }
 
     private var helpText: String {
         if !teammate.isOnline { return "\(teammate.name) is offline" }
         if isSharing { return "Click to view \(teammate.name)'s screen" }
         if canJoinThem { return "Click to join \(teammate.name) in the team room" }
-        if team.isInRoom { return "\(teammate.name) is online" }
+        if canCallIn { return "Click Call In to ask \(teammate.name) to join the room" }
         return "Click the button on the right to talk to \(teammate.name)"
     }
 
@@ -508,11 +520,72 @@ private struct TeammateRow: View {
             return team.speaking.contains(teammate.id) ? "Speaking to you…" : "Walkie-talkie open · click to reply"
         }
         if isSharing { return "Sharing their screen · click to view" }
+        if team.invitedTeammates.contains(teammate.id) { return "Calling them into the room…" }
         if team.isInRoom(teammate) {
             if team.isInRoom { return team.speaking.contains(teammate.id) ? "Speaking…" : "In the room with you" }
             return "In the team room · click to join"
         }
         return teammate.isOnline ? "Online" : "Offline"
+    }
+}
+
+/// Shown on a teammate's row when I'm in the room and they aren't.
+private struct CallInButton: View {
+    @EnvironmentObject private var team: TeamStore
+    let teammate: Teammate
+
+    private var isCalling: Bool { team.invitedTeammates.contains(teammate.id) }
+
+    var body: some View {
+        Button { team.callIntoRoom(teammate) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "phone.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(isCalling ? "Calling…" : "Call In")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(isCalling ? Color.secondary : Color.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(isCalling ? Color.primary.opacity(0.1) : Color.blue))
+        }
+        .buttonStyle(.plain)
+        .disabled(isCalling)
+        .help("Ask \(teammate.name) to join you in the team room")
+    }
+}
+
+/// Someone in the room is calling me in.
+private struct RoomInviteBar: View {
+    @EnvironmentObject private var team: TeamStore
+    let invite: RoomInvite
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(invite.fromName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text("is calling you into the Team Room")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Button("Not now") { team.dismissRoomInvite() }
+                .buttonStyle(.link)
+                .font(.system(size: 11))
+            Button { team.acceptRoomInvite() } label: {
+                Text("Join")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.green))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
 
