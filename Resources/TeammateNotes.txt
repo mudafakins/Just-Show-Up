@@ -40,9 +40,9 @@ How to use it:
     is in which room. Click the red button to leave.
   - A teammate in another room shows a green "Join" button that takes
     you to them.
-  - Ring: the bell button on a teammate's row gets their attention with
-    two chimes. If you are in a room, it asks them to join you there
-    (they get Join / Not now).
+  - Calling: click the bell on a teammate's row and pick "Call to
+    Room 1/2/3". You move to that room and their Mac rings like a phone
+    until they Accept or Decline. Click the red button to stop calling.
   - In a room, use the share button to share a screen or one window.
   - When a teammate shares, drag in the window that opens to draw on
     their screen.

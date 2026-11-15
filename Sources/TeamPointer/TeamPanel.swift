@@ -512,13 +512,12 @@ private struct TeammateRow: View {
         if isSharing { return "Click to view \(teammate.name)'s screen" }
         if let room = joinableRoom { return "Click to join \(teammate.name) in \(Rooms.name(room))" }
         if team.isInMyRoom(teammate) { return "\(teammate.name) is in the room with you" }
-        if team.isInRoom { return "Ring \(teammate.name) to ask them into your room" }
-        return "Ring \(teammate.name) to get their attention"
+        return "Click the bell to call \(teammate.name) to a room"
     }
 
     private var statusText: String {
         if isSharing { return "Sharing their screen · click to view" }
-        if team.ringingTeammates.contains(teammate.id) { return "Ringing…" }
+        if let number = team.ringingTeammates[teammate.id] { return "Calling to \(Rooms.name(number))…" }
         if team.isInMyRoom(teammate) {
             return team.speaking.contains(teammate.id) ? "Speaking…" : "In the room with you"
         }
@@ -527,47 +526,30 @@ private struct TeammateRow: View {
     }
 }
 
-/// A teammate rang me: into their room (Join / Not now) or just for attention (OK).
+/// A teammate is calling me to a room: Accept or Decline.
 private struct RingBar: View {
     @EnvironmentObject private var team: TeamStore
     let ring: IncomingRing
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "bell.fill")
+            Image(systemName: "phone.arrow.down.left.fill")
                 .font(.system(size: 13))
-                .foregroundStyle(.orange)
+                .foregroundStyle(.green)
             VStack(alignment: .leading, spacing: 1) {
                 Text(ring.fromName)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
-                Text(ring.roomNumber.map { "is ringing you into \(Rooms.name($0))" } ?? "is ringing you")
+                Text("is calling you to \(Rooms.name(ring.roomNumber))")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if ring.roomNumber != nil {
-                Button("Not now") { team.dismissRing() }
-                    .buttonStyle(.link)
-                    .font(.system(size: 11))
-                Button { team.acceptRing() } label: {
-                    Text("Join")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.green))
-                }
-                .buttonStyle(.plain)
-            } else {
-                Button { team.dismissRing() } label: {
-                    Text("OK")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.primary.opacity(0.12)))
-                }
-                .buttonStyle(.plain)
+            RoundButton(symbol: "phone.down.fill", tint: .red, help: "Decline") {
+                team.declineRing()
+            }
+            RoundButton(symbol: "phone.fill", tint: .green, help: "Accept") {
+                team.acceptRing()
             }
         }
         .padding(.horizontal, 12)
@@ -594,26 +576,42 @@ private struct JoinRoomButton: View {
     }
 }
 
-/// Rings a teammate: into my room if I'm in one, otherwise just for their attention.
+/// The bell: choose a room to call a teammate to. While calling, it becomes a stop button.
 private struct RingButton: View {
     @EnvironmentObject private var team: TeamStore
     let teammate: Teammate
 
-    private var isRinging: Bool { team.ringingTeammates.contains(teammate.id) }
+    private var callingTo: Int? { team.ringingTeammates[teammate.id] }
 
     var body: some View {
-        Button { team.ring(teammate) } label: {
-            Image(systemName: isRinging ? "bell.and.waves.left.and.right.fill" : "bell.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isRinging ? Color.white : Color.secondary)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(isRinging ? Color.orange : Color.primary.opacity(0.1)))
+        if callingTo != nil {
+            Button { team.stopCalling(teammate) } label: {
+                Image(systemName: "phone.down.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.red))
+            }
+            .buttonStyle(.plain)
+            .help("Stop calling \(teammate.name)")
+        } else {
+            Menu {
+                ForEach(Rooms.numbers, id: \.self) { number in
+                    Button("Call to \(Rooms.name(number))") { team.ring(teammate, to: number) }
+                        .disabled(team.room(of: teammate) == number)
+                }
+            } label: {
+                Image(systemName: "bell.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Circle().fill(Color.primary.opacity(0.1)))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Call \(teammate.name) to a room")
         }
-        .buttonStyle(.plain)
-        .disabled(isRinging)
-        .help(team.isInRoom
-              ? "Ring \(teammate.name) into \(Rooms.name(team.call?.number ?? 1))"
-              : "Ring \(teammate.name) to get their attention")
     }
 }
 

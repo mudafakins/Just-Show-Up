@@ -16,21 +16,22 @@ struct CallState: Equatable {
     var isConnecting = true
 }
 
-/// A teammate is ringing me: into their room, or just to get my attention.
+/// A teammate is calling me to a room.
 struct IncomingRing: Equatable {
     let from: UUID
     let fromName: String
-    /// The room they want me in; nil when they only want my attention.
-    let roomNumber: Int?
+    let roomNumber: Int
 }
 
 /// Sent between teammates over the team channel. Kinds this build doesn't know
 /// (from older builds) fail to decode and are skipped.
 struct CallSignal: Codable {
     enum Kind: String, Codable {
-        /// "Come here" (with a room number) or "look at me" (without).
+        /// "Come to this room" (with a room number).
         case ring
-        /// Replies to a ring: "seen / not now" and "on Do Not Disturb".
+        /// The caller stopped calling.
+        case cancel
+        /// Replies to a call: declined, and "on Do Not Disturb".
         case decline, busy
     }
     let kind: Kind
@@ -71,9 +72,9 @@ final class TeamStore: ObservableObject {
     @Published var call: CallState?
     /// Which room each teammate is in, from presence (known even when I'm in none).
     @Published var roomMembers: [UUID: Int] = [:]
-    /// Teammates I've rung who haven't arrived or answered yet.
-    @Published var ringingTeammates: Set<UUID> = []
-    /// Someone is ringing me.
+    /// Teammates I'm calling, and the room I'm calling each of them to.
+    @Published var ringingTeammates: [UUID: Int] = [:]
+    /// Someone is calling me.
     @Published var incomingRing: IncomingRing?
     /// Lets the app delegate open the panel when someone rings me.
     var onRing: (() -> Void)?
@@ -109,7 +110,7 @@ final class TeamStore: ObservableObject {
         engine.onParticipantsChanged = { [weak self] ids in
             guard let self, self.call != nil else { return }
             self.call?.connected = ids
-            self.ringingTeammates.subtract(ids)
+            for id in ids { self.ringingTeammates[id] = nil }
         }
         engine.onRemoteSharesChanged = { [weak self] ids in self?.sharingTeammates = ids }
         engine.onLocalShareStopped = { [weak self] in
@@ -209,7 +210,7 @@ final class TeamStore: ObservableObject {
         teamCode = nil
         teamID = nil
         leaveRoom()
-        incomingRing = nil
+        stopIncomingRing()
         phase = .welcome
     }
 
@@ -356,12 +357,11 @@ final class TeamStore: ObservableObject {
             if let room = entry.room, Rooms.numbers.contains(room) { roomMembers[entry.id] = room }
         }
         if let myID = me?.id { roomMembers[myID] = nil }
-        if let mine = call?.number {
-            ringingTeammates = ringingTeammates.filter { roomMembers[$0] != mine }
-        }
-        // Whoever rang me into their room has left it or gone offline.
-        if let ring = incomingRing, let number = ring.roomNumber, roomMembers[ring.from] != number {
-            incomingRing = nil
+        // Someone I'm calling arrived in the room I called them to.
+        ringingTeammates = ringingTeammates.filter { roomMembers[$0.key] != $0.value }
+        // Whoever is calling me went offline.
+        if let ring = incomingRing, !onlineIDs.contains(ring.from) {
+            stopIncomingRing()
         }
 
         // Someone we don't know yet came online: a new teammate just joined.
@@ -419,10 +419,11 @@ final class TeamStore: ObservableObject {
     func joinRoom(_ number: Int) {
         guard let teamID, Rooms.numbers.contains(number), call?.number != number else { return }
         let switching = call != nil
-        if incomingRing?.roomNumber == number { incomingRing = nil }
+        if incomingRing != nil { stopIncomingRing() }
         notice = nil
         errorMessage = nil
-        ringingTeammates = []
+        // Moving rooms ends any calls I was making to the old one.
+        cancelAllCalls()
         isSharingScreen = false
         isDrawingOnOwnScreen = false
         let room = "\(teamID.uuidString.lowercased()):room\(number)"
@@ -469,7 +470,7 @@ final class TeamStore: ObservableObject {
     func leaveRoom() {
         guard call != nil else { return }
         call = nil
-        ringingTeammates = []
+        cancelAllCalls()
         isMuted = false
         isSharingScreen = false
         isDrawingOnOwnScreen = false
@@ -479,38 +480,58 @@ final class TeamStore: ObservableObject {
         }
     }
 
-    // MARK: Ringing
+    // MARK: Calling a teammate to a room
+    //
+    // Pick a room from the bell menu: I go to that room and their Mac rings like a phone
+    // until they accept, decline, I stop calling, or 30 seconds pass.
 
-    /// Rings a teammate: into my room if I'm in one, otherwise just to get their attention.
-    func ring(_ teammate: Teammate) {
-        guard teammate.isOnline, !isInMyRoom(teammate), !ringingTeammates.contains(teammate.id),
-              let teamID
-        else { return }
-        ringingTeammates.insert(teammate.id)
+    /// Calls a teammate to a room, moving me there first if I'm elsewhere.
+    func ring(_ teammate: Teammate, to number: Int) {
+        guard teammate.isOnline, Rooms.numbers.contains(number), room(of: teammate) != number else { return }
+        if call?.number != number { joinRoom(number) }
+        ringingTeammates[teammate.id] = number
         notice = nil
-        let number = call?.number
-        let room = number.map { "\(teamID.uuidString.lowercased()):room\($0)" } ?? ""
         Task {
-            await send(.ring, to: teammate.id, room: room, roomNumber: number)
+            await send(.ring, to: teammate.id, roomNumber: number)
             try? await Task.sleep(for: .seconds(30))
-            guard ringingTeammates.contains(teammate.id) else { return }
-            ringingTeammates.remove(teammate.id)
-            notice = number == nil ? "\(teammate.name) didn't respond." : "\(teammate.name) didn't join."
+            guard ringingTeammates[teammate.id] == number else { return }
+            ringingTeammates[teammate.id] = nil
+            await send(.cancel, to: teammate.id, roomNumber: number)
+            notice = "\(teammate.name) didn't answer."
         }
     }
 
-    /// Join the room I was rung into.
-    func acceptRing() {
-        guard let ring = incomingRing else { return }
-        incomingRing = nil
-        if let number = ring.roomNumber { joinRoom(number) }
+    /// Stops calling a teammate; their phone stops ringing.
+    func stopCalling(_ teammate: Teammate) {
+        guard let number = ringingTeammates.removeValue(forKey: teammate.id) else { return }
+        Task { await send(.cancel, to: teammate.id, roomNumber: number) }
     }
 
-    /// "Not now" for a room ring, "OK" for an attention ring. Either way the ringer is told.
-    func dismissRing() {
+    private func cancelAllCalls() {
+        let calls = ringingTeammates
+        ringingTeammates = [:]
+        Task {
+            for (id, number) in calls { await send(.cancel, to: id, roomNumber: number) }
+        }
+    }
+
+    /// Accept: join the room I'm being called to.
+    func acceptRing() {
         guard let ring = incomingRing else { return }
+        stopIncomingRing()
+        joinRoom(ring.roomNumber)
+    }
+
+    /// Decline: the caller is told.
+    func declineRing() {
+        guard let ring = incomingRing else { return }
+        stopIncomingRing()
+        Task { await send(.decline, to: ring.from, roomNumber: ring.roomNumber) }
+    }
+
+    private func stopIncomingRing() {
         incomingRing = nil
-        Task { await send(.decline, to: ring.from, room: "", roomNumber: ring.roomNumber) }
+        Ringtone.stop()
     }
 
     func toggleMute() {
@@ -585,55 +606,45 @@ final class TeamStore: ObservableObject {
 
         switch signal.kind {
         case .ring:
-            let number = signal.roomNumber.flatMap { Rooms.numbers.contains($0) ? $0 : nil }
-            // Already in the room they want me in.
-            if let number, call?.number == number { return }
+            guard let number = signal.roomNumber, Rooms.numbers.contains(number) else { return }
+            // Already in the room they're calling me to.
+            if call?.number == number { return }
             if doNotDisturb {
-                await send(.busy, to: signal.from, room: "", roomNumber: number)
+                await send(.busy, to: signal.from, roomNumber: number)
                 return
             }
             if TestTeammate.isActive {
-                if let number {
-                    joinRoom(number)
-                } else {
-                    await send(.decline, to: signal.from, room: "", roomNumber: nil)
-                }
+                try? await Task.sleep(for: .seconds(1))
+                joinRoom(number)
                 return
             }
             incomingRing = IncomingRing(from: signal.from, fromName: name, roomNumber: number)
-            playRingSound()
+            Ringtone.start()
             onRing?()
-            // Clear the ring by itself if it's ignored.
+            // Stop by itself if the caller's cancel never arrives.
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(45))
+                try? await Task.sleep(for: .seconds(40))
                 guard let self, self.incomingRing?.from == signal.from else { return }
-                self.incomingRing = nil
+                self.stopIncomingRing()
+                self.notice = "Missed call from \(name)."
             }
+
+        case .cancel:
+            guard incomingRing?.from == signal.from else { return }
+            stopIncomingRing()
+            notice = "Missed call from \(name)."
 
         case .decline, .busy:
-            guard ringingTeammates.contains(signal.from) else { return }
-            ringingTeammates.remove(signal.from)
-            if signal.kind == .busy {
-                notice = "\(name) is on Do Not Disturb."
-            } else {
-                notice = signal.roomNumber == nil ? "\(name) saw your ring." : "\(name) can't join right now."
-            }
+            guard ringingTeammates[signal.from] != nil else { return }
+            ringingTeammates[signal.from] = nil
+            notice = signal.kind == .busy ? "\(name) is on Do Not Disturb." : "\(name) declined."
         }
     }
 
-    private func send(_ kind: CallSignal.Kind, to id: UUID, room: String, roomNumber: Int?) async {
+    private func send(_ kind: CallSignal.Kind, to id: UUID, roomNumber: Int?) async {
         guard let me, let channel = presenceChannel else { return }
-        let signal = CallSignal(kind: kind, from: me.id, to: id, room: room, name: me.name, roomNumber: roomNumber)
+        let signal = CallSignal(kind: kind, from: me.id, to: id, room: "", name: me.name, roomNumber: roomNumber)
         try? await channel.broadcast(event: "call", message: signal)
-    }
-
-    /// Two short chimes: enough to notice, not a ringing phone.
-    private func playRingSound() {
-        NSSound(named: "Glass")?.play()
-        Task {
-            try? await Task.sleep(for: .milliseconds(700))
-            NSSound(named: "Glass")?.play()
-        }
     }
 }
 
