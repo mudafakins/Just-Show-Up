@@ -415,13 +415,11 @@ final class TeamStore: ObservableObject {
     // One always-open voice room per team, like a voice channel. Nobody rings anybody:
     // you join, teammates see that you're inside, and they drop in when they want.
 
-    /// SF Symbol for the menu bar while something is happening; nil means show the ✦✦ mark.
-    /// Being in the room deliberately keeps the ✦✦ mark.
+    /// SF Symbol for the menu bar; nil means show the ✦✦ mark.
+    /// Being in the room, calling someone in or using the walkie-talkie all keep the ✦✦ mark;
+    /// only Do Not Disturb changes it.
     var menuBarSymbol: String? {
-        if talkingTo != nil { return "dot.radiowaves.left.and.right" }
-        // Someone is talking to me over the walkie-talkie.
-        if let walkiePeer, speaking.contains(walkiePeer) { return "dot.radiowaves.left.and.right" }
-        return doNotDisturb ? "moon.fill" : nil
+        doNotDisturb ? "moon.fill" : nil
     }
 
     var sortedTeammates: [Teammate] {
