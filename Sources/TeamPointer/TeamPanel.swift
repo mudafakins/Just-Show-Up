@@ -229,6 +229,7 @@ private struct Header: View {
     @EnvironmentObject private var team: TeamStore
     @EnvironmentObject private var updater: Updater
     @AppStorage(InkSettings.keepInkKey) private var keepInk = false
+    @AppStorage(Sounds.enabledKey) private var playSounds = true
 
     var body: some View {
         ZStack {
@@ -244,6 +245,7 @@ private struct Header: View {
                     }
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
+                    Toggle("Sounds", isOn: $playSounds)
                     Divider()
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }

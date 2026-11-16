@@ -70,6 +70,8 @@ final class TeamStore: ObservableObject {
     // Rooms
     /// Set while I'm in a room.
     @Published var call: CallState?
+    /// When I last finished joining a room (for the teammate chimes).
+    private var joinedAt = Date.distantPast
     /// Which room each teammate is in, from presence (known even when I'm in none).
     @Published var roomMembers: [UUID: Int] = [:]
     /// Teammates I'm calling, and the room I'm calling each of them to.
@@ -108,7 +110,16 @@ final class TeamStore: ObservableObject {
         self.client = client
 
         engine.onParticipantsChanged = { [weak self] ids in
-            guard let self, self.call != nil else { return }
+            guard let self, let call = self.call else { return }
+            // Chime when someone joins or leaves my room (not for the people
+            // already there when I arrive).
+            if !call.isConnecting, Date().timeIntervalSince(self.joinedAt) > 1.5 {
+                if !ids.subtracting(call.connected).isEmpty {
+                    Sounds.play(.teammateJoined)
+                } else if !call.connected.subtracting(ids).isEmpty {
+                    Sounds.play(.teammateLeft)
+                }
+            }
             self.call?.connected = ids
             for id in ids { self.ringingTeammates[id] = nil }
         }
@@ -134,6 +145,7 @@ final class TeamStore: ObservableObject {
             guard let self, self.call != nil else { return }
             self.call = nil
             self.isMuted = false
+            Sounds.play(.leave)
             self.notice = "You were disconnected from the room."
             Task { await self.updatePresence() }
         }
@@ -444,12 +456,15 @@ final class TeamStore: ObservableObject {
             return false
         }
         call?.isConnecting = false
+        joinedAt = Date()
+        Sounds.play(.join)
         return true
     }
 
     func leaveRoom() {
         guard call != nil else { return }
         call = nil
+        Sounds.play(.leave)
         cancelAllCalls()
         isMuted = false
         isSharingScreen = false
