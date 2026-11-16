@@ -1,17 +1,28 @@
-# Builds the Windows installer on GitHub's free Windows machines.
-# Download it from the run's page: Actions -> Windows build -> the run -> Artifacts.
+# Builds the Windows app on GitHub's free Windows machines.
 #
-# Needs two repository secrets (Settings -> Secrets and variables -> Actions):
-#   SUPABASE_URL  https://<project>.supabase.co
-#   SUPABASE_KEY  the publishable (anon) key — the same values as Config.local.json
+# - Every push that changes windows/ builds a test installer:
+#   Actions -> Windows build -> the run -> Artifacts. Teammates never see these.
+# - Publishing a release (scripts/release.sh does this) builds the real update and
+#   adds it to that release, with latest.json, which the installed apps check.
+#
+# Needs three repository secrets (Settings -> Secrets and variables -> Actions):
+#   SUPABASE_URL               https://<project>.supabase.co
+#   SUPABASE_KEY               the publishable (anon) key, as in Config.local.json
+#   TAURI_SIGNING_PRIVATE_KEY  the update key, ~/.tauri/justshowup-updater.key
 name: Windows build
 
 on:
   push:
+    branches: [main]
     paths:
       - "windows/**"
       - ".github/workflows/windows.yml"
+  release:
+    types: [published]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -19,6 +30,9 @@ jobs:
     defaults:
       run:
         working-directory: windows
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -40,15 +54,29 @@ jobs:
         shell: pwsh
         run: |
           if (-not "${{ secrets.SUPABASE_URL }}") { throw "Add the SUPABASE_URL and SUPABASE_KEY repository secrets first." }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw "Add the TAURI_SIGNING_PRIVATE_KEY repository secret first." }
           @(
             "VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }}"
             "VITE_SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}"
           ) | Out-File -FilePath .env.local -Encoding utf8
 
-      - run: npx tauri build
+      # Test build (pushes): just the installer, as a download on the run's page.
+      - if: github.event_name != 'release'
+        run: npx tauri build
 
-      - uses: actions/upload-artifact@v4
+      - if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
         with:
           name: JustShowUp-Windows-installer
           path: windows/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+
+      # Release: build, sign, and add the installer and latest.json to the release.
+      - if: github.event_name == 'release'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: windows
+          releaseId: ${{ github.event.release.id }}
+          includeUpdaterJson: true

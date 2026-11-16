@@ -11,10 +11,18 @@ app's `TeamStore.swift`, `CallEngine.swift` and `Ink.swift`.
 
 ## Getting the installer
 
-Every push that changes this folder builds an installer on GitHub:
-**Actions → Windows build → latest run → Artifacts → JustShowUp-Windows-installer**.
-The repository needs two secrets, `SUPABASE_URL` and `SUPABASE_KEY`, with the same
-values as `Config.local.json`.
+The latest release has it: **Releases → latest → `…x64-setup.exe`** (the Mac app is
+`JustShowUp-mac.zip` on the same page). Installed apps update themselves: when a new
+release is out, the settings gear gets a dot and offers **Update to …**.
+
+To release a new version (both apps), run on the Mac: `scripts/release.sh 0.3.0`.
+GitHub adds the Windows files to the release about 10 minutes later.
+
+Every push that changes this folder also builds a test installer:
+**Actions → Windows build → the run → Artifacts**. The repository needs three
+secrets: `SUPABASE_URL` and `SUPABASE_KEY` (the values in `Config.local.json`) and
+`TAURI_SIGNING_PRIVATE_KEY` (the update key, `~/.tauri/justshowup-updater.key` on the
+Mac that made it; keep a backup, since without it you can't ship Windows updates).
 
 ## Building locally
 
