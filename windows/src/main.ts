@@ -429,8 +429,6 @@ async function connectRoom(name: string): Promise<boolean> {
   room = lk;
   try {
     await lk.connect(data.url, data.token);
-    await lk.localParticipant.setMicrophoneEnabled(!S.muted);
-    await lk.startAudio();
   } catch (e) {
     await disconnectRoom();
     if (S.call?.room === name) S.call = undefined;
@@ -443,8 +441,30 @@ async function connectRoom(name: string): Promise<boolean> {
     return false;
   }
   S.call.connecting = false;
+  // A missing or blocked microphone shouldn't keep you out of the room:
+  // stay in it muted (you can still listen, share and draw) and say why.
+  await lk.startAudio().catch(() => {});
+  if (!S.muted) {
+    try {
+      await lk.localParticipant.setMicrophoneEnabled(true);
+    } catch (e) {
+      S.muted = true;
+      S.notice = micProblem(e);
+    }
+  }
   reportParticipants();
   return true;
+}
+
+function micProblem(e: unknown): string {
+  const name = e && typeof e === "object" && "name" in e ? String((e as Error).name) : "";
+  if (name === "NotFoundError" || name === "OverconstrainedError")
+    return "No microphone found, so you're muted. Plug one in, then click the mic button.";
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return "Windows blocked the microphone, so you're muted. Turn on Settings > Privacy & security > Microphone > \"Let desktop apps access your microphone\", then click the mic button.";
+  if (name === "NotReadableError" || name === "AbortError")
+    return "Another app is using the microphone, so you're muted. Close it, then click the mic button.";
+  return `Microphone problem (${errorText(e)}), so you're muted.`;
 }
 
 function participantID(p?: Participant) {
@@ -534,8 +554,15 @@ function leaveRoom() {
 
 async function toggleMute() {
   S.muted = !S.muted;
+  S.notice = undefined;
   render();
-  await room?.localParticipant.setMicrophoneEnabled(!S.muted);
+  try {
+    await room?.localParticipant.setMicrophoneEnabled(!S.muted);
+  } catch (e) {
+    S.muted = true;
+    S.notice = micProblem(e);
+    render();
+  }
 }
 
 // ---------------------------------------------------------------- drawing
