@@ -83,7 +83,7 @@ git push -q origin main
 SHA="$(git rev-parse HEAD)"
 
 echo "==> Publishing release v$VERSION"
-BODY="$(python3 -c 'import json,sys; print(json.dumps({"tag_name": "v"+sys.argv[1], "target_commitish": sys.argv[2], "name": "Just Show Up! "+sys.argv[1], "body": "Mac: JustShowUp-mac.zip. Windows: the setup .exe (added by GitHub a few minutes after publishing). Installed apps update themselves from Settings."}))' "$VERSION" "$SHA")"
+BODY="$(python3 -c 'import json,sys; print(json.dumps({"tag_name": "v"+sys.argv[1], "target_commitish": sys.argv[2], "name": "Just Show Up! "+sys.argv[1], "body": "**Already installed?** Update from the gear menu: Update to …\n\n**Mac (first install):** download JustShowUp-mac.zip, unzip it, drag Just Show Up! into Applications and open it. macOS blocks it the first time: open System Settings > Privacy & Security, scroll down, click Open Anyway next to Just Show Up!, then confirm.\n\n**Windows (first install):** download the setup .exe (GitHub adds it a few minutes after publishing) and run it. On the SmartScreen warning click More info > Run anyway."}))' "$VERSION" "$SHA")"
 RELEASE="$(api -X POST "https://api.github.com/repos/$REPO/releases" -d "$BODY")"
 UPLOAD="$(printf '%s' "$RELEASE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')"
 URL="$(printf '%s' "$RELEASE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["html_url"])')"
