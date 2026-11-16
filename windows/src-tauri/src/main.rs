@@ -228,6 +228,8 @@ fn quit(app: AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             panel_height: Mutex::new(420.0),
             ..Default::default()

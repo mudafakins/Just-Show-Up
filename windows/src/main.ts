@@ -17,6 +17,7 @@ import {
 } from "livekit-client";
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
 import { startRingtone, stopRingtone } from "./ringtone";
+import { checkForUpdate, installUpdate, update, updateBusy } from "./updater";
 
 // ---------------------------------------------------------------- model
 
@@ -778,6 +779,7 @@ function render() {
   if (S.phase !== built) buildSkeleton();
   if (S.phase === "team") renderTeam();
   if (S.phase === "welcome") renderWelcome();
+  panelEl.querySelector(".gear")?.classList.toggle("has-update", !!update.available);
   reportHeight();
 }
 
@@ -1029,6 +1031,14 @@ function gearMenu(anchor: HTMLElement) {
      <button data-action="copy-code">Copy Team Code</button>
      <button data-action="new-code">New Team Code</button>
      <button data-action="leave-team">Leave Team</button><hr />
+     ${
+       update.available
+         ? S.call
+           ? `<button disabled>Update to ${esc(update.available.version)} (leave the room first)</button>`
+           : `<button data-action="install-update" ${updateBusy() ? "disabled" : ""}>Update to ${esc(update.available.version)}…</button>`
+         : `<button data-action="check-update" ${updateBusy() ? "disabled" : ""}>Check for Updates</button>`
+     }
+     <div class="label">Version ${esc(update.current)}</div><hr />
      <button data-action="quit">Quit Just Show Up!</button>`,
   );
 }
@@ -1104,6 +1114,12 @@ document.addEventListener("click", (event) => {
     case "keep-ink":
       keepInk.set(!keepInk.get());
       return renderViewerControls();
+    case "check-update":
+      closeMenu();
+      return void checkForUpdate(true);
+    case "install-update":
+      closeMenu();
+      return void installUpdate();
     case "quit":
       return void invoke("quit");
     case "w-show-join":
@@ -1135,3 +1151,11 @@ void listen("panel-shown", () => {
 });
 
 void start();
+
+// Updates: check now and every few hours; a dot on the gear when one is ready.
+update.onChange = (message) => {
+  if (message !== undefined) S.notice = message;
+  render();
+};
+void checkForUpdate(false);
+setInterval(() => void checkForUpdate(false), 4 * 60 * 60 * 1000);
