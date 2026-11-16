@@ -17,6 +17,7 @@ import {
 } from "livekit-client";
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
 import { startRingtone, stopRingtone } from "./ringtone";
+import { playSound, sounds } from "./sounds";
 import { checkForUpdate, installUpdate, update, updateBusy } from "./updater";
 
 // ---------------------------------------------------------------- model
@@ -442,6 +443,8 @@ async function connectRoom(name: string): Promise<boolean> {
     return false;
   }
   S.call.connecting = false;
+  joinedAt = performance.now();
+  playSound("join");
   // A missing or blocked microphone shouldn't keep you out of the room:
   // stay in it muted (you can still listen, share and draw) and say why.
   await lk.startAudio().catch(() => {});
@@ -472,9 +475,18 @@ function participantID(p?: Participant) {
   return p ? norm(p.identity) : undefined;
 }
 
+let joinedAt = 0;
+
 function reportParticipants() {
   if (!room || !S.call) return;
-  S.call.connected = new Set([...room.remoteParticipants.values()].map((p) => norm(p.identity)));
+  const before = S.call.connected;
+  const now = new Set([...room.remoteParticipants.values()].map((p) => norm(p.identity)));
+  // Chime when someone joins or leaves my room (not for the people already there).
+  if (!S.call.connecting && performance.now() - joinedAt > 1500) {
+    if ([...now].some((id) => !before.has(id))) playSound("teammateJoined");
+    else if ([...before].some((id) => !now.has(id))) playSound("teammateLeft");
+  }
+  S.call.connected = now;
   for (const id of S.call.connected) S.ringing.delete(id);
   render();
 }
@@ -526,6 +538,7 @@ function wireRoom(lk: Room) {
     cleanUpSharing();
     if (S.call) {
       S.call = undefined;
+      playSound("leave");
       S.notice = "You were disconnected from the room.";
       void updatePresence();
       render();
@@ -544,6 +557,7 @@ async function disconnectRoom() {
 function leaveRoom() {
   if (!S.call) return;
   S.call = undefined;
+  playSound("leave");
   cancelAllCalls();
   S.muted = false;
   render();
@@ -1030,7 +1044,8 @@ function gearMenu(anchor: HTMLElement) {
     `<div class="label">You: ${esc(S.me?.name ?? "")}</div>
      <button data-action="change-name">Change Name…</button><hr />
      <button data-action="dnd">${check(S.doNotDisturb)}Do Not Disturb</button>
-     <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button><hr />
+     <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button>
+     <button data-action="sounds">${check(sounds.enabled())}Sounds</button><hr />
      <button data-action="copy-code">Copy Team Code</button>
      <button data-action="new-code">New Team Code</button>
      <button data-action="leave-team">Leave Team</button><hr />
@@ -1114,6 +1129,10 @@ document.addEventListener("click", (event) => {
       S.doNotDisturb = !S.doNotDisturb;
       localStorage.setItem("dnd", S.doNotDisturb ? "1" : "0");
       return render();
+    case "sounds":
+      sounds.setEnabled(!sounds.enabled());
+      closeMenu();
+      return;
     case "keep-ink":
       keepInk.set(!keepInk.get());
       return renderViewerControls();
