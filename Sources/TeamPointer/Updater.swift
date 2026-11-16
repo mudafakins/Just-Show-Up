@@ -128,6 +128,9 @@ final class Updater: ObservableObject {
     private func relaunch(replacingWith newApp: URL) throws {
         let current = Bundle.main.bundleURL
         let parent = current.deletingLastPathComponent()
+        // Opened straight from Downloads, macOS runs a read-only copy from a hidden
+        // folder ("App Translocation"), which can't be replaced.
+        guard !current.path.contains("/AppTranslocation/") else { throw UpdateError.translocated }
         guard FileManager.default.isWritableFile(atPath: parent.path) else { throw UpdateError.notWritable }
 
         let backup = newApp.deletingLastPathComponent().appendingPathComponent("previous.app")
@@ -183,7 +186,7 @@ final class Updater: ObservableObject {
 }
 
 enum UpdateError: Error {
-    case server, badDownload, untrusted, unsignedSelf, notWritable
+    case server, badDownload, untrusted, unsignedSelf, notWritable, translocated
 
     var message: String {
         switch self {
@@ -192,6 +195,7 @@ enum UpdateError: Error {
         case .untrusted: "The update isn't signed by your team's certificate, so it wasn't installed."
         case .unsignedSelf: "This copy can't verify updates. Install the latest version by hand once."
         case .notWritable: "Can't replace the app here. Move it to the Applications folder, then try again."
+        case .translocated: "macOS is running a temporary copy, so it can't update. Quit, drag Just Show Up! into Applications, open it from there, then update."
         }
     }
 }
