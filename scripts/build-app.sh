@@ -32,8 +32,12 @@ if [[ -z "${SDKROOT:-}" && "$(xcode-select -p)" == "/Library/Developer/CommandLi
     export SDKROOT="$CLT_SDK"
 fi
 
-swift build -c "$CONFIG"
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/TeamPointer"
+# Build in a shared folder, not under your home folder: libraries embed the paths of
+# their source files, and a path under /Users/<you> would show your username to
+# anyone who downloads the app.
+SCRATCH=(--scratch-path /Users/Shared/JustShowUpBuild)
+swift build -c "$CONFIG" "${SCRATCH[@]}"
+BIN="$(swift build -c "$CONFIG" "${SCRATCH[@]}" --show-bin-path)/TeamPointer"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
