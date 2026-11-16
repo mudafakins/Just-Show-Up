@@ -80,3 +80,24 @@ jobs:
           projectPath: windows
           releaseId: ${{ github.event.release.id }}
           includeUpdaterJson: true
+
+      # The file installed apps read to find the update (written here so it's
+      # always there, whatever tauri-action does).
+      - if: github.event_name == 'release'
+        name: Publish latest.json
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          $exe = gh release view $tag --repo "${{ github.repository }}" --json assets --jq '.assets[].name | select(endswith("-setup.exe"))'
+          $sig = Get-Content (Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe.sig | Select-Object -First 1).FullName -Raw
+          $platform = @{ signature = $sig.Trim(); url = "https://github.com/${{ github.repository }}/releases/download/$tag/$exe" }
+          @{
+            version  = $tag.TrimStart("v")
+            notes    = "${{ github.event.release.name }}"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{ "windows-x86_64" = $platform; "windows-x86_64-nsis" = $platform }
+          } | ConvertTo-Json -Depth 5 | Out-File -FilePath latest.json -Encoding utf8NoBOM
+          Get-Content latest.json
+          gh release upload $tag latest.json --clobber --repo "${{ github.repository }}"
