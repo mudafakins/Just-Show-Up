@@ -13,10 +13,17 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+// The Windows app runs in a web view, which asks permission (CORS) before calling.
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...cors, "Content-Type": "application/json" },
   });
 
 const base64url = (data: Uint8Array | string) => {
@@ -42,6 +49,7 @@ async function signJWT(payload: Record<string, unknown>, secret: string) {
 }
 
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST." }, 405);
 
   // Trim: a stray space or line break from copy-paste would make LiveKit reject the token.
