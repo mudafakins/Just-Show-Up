@@ -198,9 +198,27 @@ fn open_overlay(app: AppHandle, aspect: f64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let _ = overlay.set_position(*monitor.position());
     let _ = overlay.set_size(PhysicalSize::new(monitor.size().width, monitor.size().height));
-    let _ = overlay.set_ignore_cursor_events(true);
+    set_click_through(&overlay, true);
     let _ = overlay.show();
     Ok(())
+}
+
+/// Lets clicks pass through the overlay (or not, in draw mode).
+///
+/// On Windows, click-through makes the window "layered", and Windows doesn't draw a
+/// layered window until it has been given its opacity, which tao never does. So give
+/// it full opacity; the page's own transparency still shows the screen underneath.
+fn set_click_through(overlay: &WebviewWindow, on: bool) {
+    let _ = overlay.set_ignore_cursor_events(on);
+    #[cfg(windows)]
+    if on {
+        if let Ok(hwnd) = overlay.hwnd() {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, LWA_ALPHA};
+            unsafe {
+                SetLayeredWindowAttributes(hwnd.0 as _, 0, 255, LWA_ALPHA);
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -214,7 +232,7 @@ fn close_overlay(app: AppHandle) {
 #[tauri::command]
 fn set_overlay_interactive(app: AppHandle, on: bool) {
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let _ = overlay.set_ignore_cursor_events(!on);
+        set_click_through(&overlay, !on);
         if on {
             let _ = overlay.set_focus();
         }

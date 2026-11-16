@@ -640,10 +640,13 @@ async function startSharing() {
   // The see-through layer where teammates' drawings appear. It can cover a whole screen;
   // a single shared window can't be followed, so then only viewers see the drawings.
   if ((settings as { displaySurface?: string }).displaySurface !== "window") {
+    // Mark it open first: the overlay may say "ready" before invoke() returns.
+    overlayOpen = true;
     try {
       await invoke("open_overlay", { aspect: shareAspect });
-      overlayOpen = true;
+      sendPeopleToOverlay();
     } catch (e) {
+      overlayOpen = false;
       S.notice = `Drawings won't show on your screen: ${errorText(e)}`;
     }
   } else {
