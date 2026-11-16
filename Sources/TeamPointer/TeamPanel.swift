@@ -227,6 +227,7 @@ private struct TeamList: View {
 /// Settings gear on the left, app name centred.
 private struct Header: View {
     @EnvironmentObject private var team: TeamStore
+    @EnvironmentObject private var updater: Updater
     @AppStorage(InkSettings.keepInkKey) private var keepInk = false
 
     var body: some View {
@@ -248,6 +249,20 @@ private struct Header: View {
                     Button("New Team Code") { Task { await team.regenerateCode() } }
                     Button("Leave Team") { Task { await team.leaveTeam() } }
                     Divider()
+                    if let release = updater.available {
+                        if team.call != nil {
+                            Button("Update to \(release.version) (leave the room first)") {}
+                                .disabled(true)
+                        } else {
+                            Button("Update to \(release.version)…") { Task { await updater.install() } }
+                                .disabled(updater.isBusy)
+                        }
+                    } else {
+                        Button("Check for Updates") { Task { await updater.check(userInitiated: true) } }
+                            .disabled(updater.isBusy)
+                    }
+                    Text("Version \(Updater.currentVersion)")
+                    Divider()
                     Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }
                         .keyboardShortcut("q")
                 } label: {
@@ -259,6 +274,14 @@ private struct Header: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Settings")
+                // A dot on the gear when an update is ready (on the menu, since
+                // menu labels drop overlays).
+                .overlay(alignment: .topTrailing) {
+                    if updater.available != nil {
+                        Circle().fill(.red).frame(width: 7, height: 7).offset(x: 3, y: -2)
+                            .allowsHitTesting(false)
+                    }
+                }
 
                 Spacer()
             }

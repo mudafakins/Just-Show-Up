@@ -19,6 +19,8 @@ fi
 
 CONFIG="${1:-debug}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# One version number for the Mac and Windows apps (see scripts/release.sh).
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 APP="$ROOT/build/$APP_NAME.app"
 
 cd "$ROOT"
@@ -36,7 +38,7 @@ BIN="$(swift build -c "$CONFIG" --show-bin-path)/TeamPointer"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN" "$APP/Contents/MacOS/TeamPointer"
-sed -e "s/__APP_NAME__/$APP_NAME/g" -e "s/__BUNDLE_ID__/$BUNDLE_ID/g" \
+sed -e "s/__APP_NAME__/$APP_NAME/g" -e "s/__BUNDLE_ID__/$BUNDLE_ID/g" -e "s/__VERSION__/$VERSION/g" \
     "$ROOT/Resources/Info.plist" > "$APP/Contents/Info.plist"
 
 # Embed the LiveKit libraries and tell the executable where to find them.
@@ -62,7 +64,7 @@ fi
 codesign --force --sign "$SIGN_IDENTITY" "$APP" >/dev/null
 echo "Signed with: $SIGN_IDENTITY"
 
-echo "Built $APP"
+echo "Built $APP (version $VERSION)"
 
 if [[ "${2:-}" == "--run" ]]; then
     # Quit the running copy and wait for it to exit before reopening.

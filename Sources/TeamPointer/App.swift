@@ -48,6 +48,7 @@ enum Main {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let team = TeamStore()
+    private let updater = Updater()
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var outsideClickMonitor: Any?
@@ -58,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem.button?.action = #selector(togglePopover)
         updateIcon()
 
-        let host = NSHostingController(rootView: TeamPanel().environmentObject(team))
+        let host = NSHostingController(rootView: TeamPanel().environmentObject(team).environmentObject(updater))
         // Let the popover grow and shrink with the panel's content.
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
@@ -69,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Being rung opens the panel so the ring is right there.
         team.onRing = { [weak self] in self?.showPopover() }
 
+        updater.onMessage = { [weak self] message in self?.team.notice = message }
+        updater.start()
     }
 
     /// The menu bar always shows the app's mark, whatever the app is doing.
