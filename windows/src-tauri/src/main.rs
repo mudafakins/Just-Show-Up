@@ -25,6 +25,8 @@ const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreen
 
 #[derive(Default)]
 struct AppState {
+    /// A file picker is open, so losing focus must not hide the panel.
+    picking: Mutex<bool>,
     /// The main window is showing a teammate's screen rather than the panel.
     viewer: Mutex<bool>,
     /// When the panel last hid because it lost focus (clicking the tray icon does that
@@ -239,6 +241,12 @@ fn set_overlay_interactive(app: AppHandle, on: bool) {
     }
 }
 
+/// Keeps the panel open while a file picker (e.g. for a profile photo) is showing.
+#[tauri::command]
+fn set_picking(app: AppHandle, on: bool) {
+    *app.state::<AppState>().picking.lock().unwrap() = on;
+}
+
 #[tauri::command]
 fn quit(app: AppHandle) {
     app.exit(0);
@@ -261,6 +269,7 @@ fn main() {
             open_overlay,
             close_overlay,
             set_overlay_interactive,
+            set_picking,
             quit
         ])
         .setup(|app| {
@@ -321,7 +330,7 @@ fn main() {
             match event {
                 // Like a menu: the panel goes away when you click elsewhere.
                 WindowEvent::Focused(false) => {
-                    if !*state.viewer.lock().unwrap() {
+                    if !*state.viewer.lock().unwrap() && !*state.picking.lock().unwrap() {
                         *state.hidden_at.lock().unwrap() = Some(Instant::now());
                         let _ = window.hide();
                     }

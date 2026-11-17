@@ -30,6 +30,8 @@ interface Teammate {
   id: string;
   name: string;
   colorIndex: number;
+  /** Where their photo is in the "avatars" storage bucket, if they set one. */
+  avatarPath?: string;
 }
 
 interface ProfileRow {
@@ -37,6 +39,7 @@ interface ProfileRow {
   name: string;
   color_index: number;
   team_id: string | null;
+  avatar_path?: string | null;
 }
 
 interface CallState {
@@ -166,10 +169,15 @@ async function reloadTeam() {
   const teams = await sb.from("teams").select("code");
   S.teamID = mine.team_id;
   S.teamCode = (teams.data?.[0] as { code?: string } | undefined)?.code;
-  S.me = { id: mine.id, name: mine.name || "Me", colorIndex: mine.color_index };
+  S.me = { id: mine.id, name: mine.name || "Me", colorIndex: mine.color_index, avatarPath: mine.avatar_path ?? undefined };
   S.teammates = rows
     .filter((p) => p.id !== userID)
-    .map((p) => ({ id: p.id, name: p.name || "Teammate", colorIndex: p.color_index }));
+    .map((p) => ({
+      id: p.id,
+      name: p.name || "Teammate",
+      colorIndex: p.color_index,
+      avatarPath: p.avatar_path ?? undefined,
+    }));
   S.phase = "team";
   sendPeopleToOverlay();
   render();
@@ -913,10 +921,80 @@ async function saveName() {
   }
 }
 
+function avatarURL(path: string) {
+  return `${env.VITE_SUPABASE_URL}/storage/v1/object/public/avatars/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 function avatar(t: Teammate) {
-  return `<div class="avatar" style="background:${colorOf(t.id)}">${esc(initials(t.name))}${
+  // Their photo covers the initials once it loads (and is removed if it can't).
+  const photo = t.avatarPath ? `<img src="${esc(avatarURL(t.avatarPath))}" alt="" onerror="this.remove()" />` : "";
+  return `<div class="avatar" style="background:${colorOf(t.id)}">${esc(initials(t.name))}${photo}${
     isOnline(t) ? '<span class="dot"></span>' : ""
   }</div>`;
+}
+
+// ---------------------------------------------------------------- profile photo
+
+/** Lets me pick a photo, shrinks it to a 256-pixel square and uploads it. */
+function choosePhoto() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/webp,image/gif,image/bmp";
+  // Losing focus to the file picker must not hide the panel.
+  void invoke("set_picking", { on: true });
+  const done = () => void invoke("set_picking", { on: false });
+  input.addEventListener("cancel", done);
+  window.addEventListener("focus", done, { once: true });
+  input.addEventListener("change", () => {
+    done();
+    const file = input.files?.[0];
+    if (file) void uploadPhoto(file);
+  });
+  input.click();
+}
+
+async function uploadPhoto(file: File) {
+  if (!sb || !S.me) return;
+  let jpeg: Blob;
+  try {
+    jpeg = await squareJPEG(file, 256);
+  } catch {
+    S.error = "That file isn't a photo the app can read.";
+    return render();
+  }
+  const old = S.me.avatarPath;
+  const path = `${S.me.id}/${Math.floor(Date.now() / 1000)}.jpg`;
+  const { error } = await sb.storage
+    .from("avatars")
+    .upload(path, jpeg, { contentType: "image/jpeg", cacheControl: "31536000", upsert: true });
+  if (error) {
+    S.error = `Couldn't upload the photo: ${errorText(error)}`;
+    return render();
+  }
+  if ((await run((c) => c.rpc("set_my_avatar", { path }))) && old) {
+    await sb.storage.from("avatars").remove([old]);
+  }
+}
+
+async function removePhoto() {
+  const old = S.me?.avatarPath;
+  if (!sb || !old) return;
+  if (await run((c) => c.rpc("set_my_avatar", { path: null }))) await sb.storage.from("avatars").remove([old]);
+}
+
+/** The middle square of an image, resized, as a JPEG. */
+async function squareJPEG(file: File, size: number): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
+  bitmap.close();
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("encode failed"))), "image/jpeg", 0.85),
+  );
 }
 
 function callBar(call: CallState) {
@@ -1047,7 +1125,9 @@ function gearMenu(anchor: HTMLElement) {
   openMenu(
     anchor,
     `<div class="label">You: ${esc(S.me?.name ?? "")}</div>
-     <button data-action="change-name">Change Name…</button><hr />
+     <button data-action="change-name">Change Name…</button>
+     <button data-action="choose-photo">${S.me?.avatarPath ? "Change Photo…" : "Add Photo…"}</button>
+     ${S.me?.avatarPath ? '<button data-action="remove-photo">Remove Photo</button>' : ""}<hr />
      <button data-action="dnd">${check(S.doNotDisturb)}Do Not Disturb</button>
      <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button>
      <button data-action="sounds">${check(sounds.enabled())}Sounds</button>
@@ -1126,6 +1206,12 @@ document.addEventListener("click", (event) => {
       return void run((c) => c.rpc("regenerate_team_code"));
     case "leave-team":
       return S.me && void run((c) => c.rpc("remove_from_team", { member: S.me!.id }));
+    case "choose-photo":
+      closeMenu();
+      return choosePhoto();
+    case "remove-photo":
+      closeMenu();
+      return void removePhoto();
     case "change-name":
       return setEditingName(true);
     case "save-name":

@@ -52,7 +52,8 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .room .title { font-size: 13px; }
 .room .sub { font-size: 11px; }
 .avatar { position: relative; width: 40px; height: 40px; border-radius: 20px; display: grid; place-items: center; color: white; font-weight: 600; font-size: 15px; flex: none; }
-.avatar .dot { position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 6px; background: var(--green); border: 2px solid var(--bg); }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.avatar .dot { z-index: 1; position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 6px; background: var(--green); border: 2px solid var(--bg); }
 .icon { width: 40px; height: 40px; border-radius: 20px; display: grid; place-items: center; background: var(--chip); color: var(--muted); flex: none; font-size: 16px; }
 .room .icon { width: 30px; height: 30px; font-size: 13px; }
 .room .icon.busy { background: var(--green); color: white; }
