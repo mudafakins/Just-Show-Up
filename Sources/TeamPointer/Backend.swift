@@ -64,11 +64,14 @@ struct ProfileRow: Decodable {
     let name: String
     let colorIndex: Int
     let teamID: UUID?
+    /// Where their photo is in the "avatars" storage bucket, if they set one.
+    let avatarPath: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name
         case colorIndex = "color_index"
         case teamID = "team_id"
+        case avatarPath = "avatar_path"
     }
 }
 

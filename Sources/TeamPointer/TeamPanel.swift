@@ -242,6 +242,10 @@ private struct Header: View {
                     if let me = team.me {
                         Text("You: \(me.name)")
                         Button("Change Name…") { team.isEditingName = true }
+                        Button(me.avatarPath == nil ? "Add Photo…" : "Change Photo…") { team.choosePhoto() }
+                        if me.avatarPath != nil {
+                            Button("Remove Photo") { Task { await team.removePhoto() } }
+                        }
                         Divider()
                     }
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
@@ -662,6 +666,18 @@ private struct Avatar: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(.white)
                 )
+                .overlay {
+                    // Their photo, when they've set one (initials show while it loads).
+                    if let url = teammate.avatarURL {
+                        AsyncImage(url: url) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.clear
+                        }
+                        .frame(width: 40, height: 40)
+                        .clipShape(Circle())
+                    }
+                }
             if teammate.isOnline {
                 Circle()
                     .fill(.green)

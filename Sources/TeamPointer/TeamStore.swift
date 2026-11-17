@@ -267,6 +267,60 @@ final class TeamStore: ObservableObject {
         await run { try await $0.rpc("set_my_name", params: ["new_name": name]).execute() }
     }
 
+    // MARK: Profile photo
+
+    /// Lets me pick a photo, shrinks it to a 256-pixel square and uploads it.
+    func choosePhoto() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Profile Photo"
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let image = NSImage(contentsOf: url), let jpeg = Self.avatarJPEG(from: image) else {
+            errorMessage = "That file isn't a photo the app can read."
+            return
+        }
+        Task { await uploadPhoto(jpeg) }
+    }
+
+    private func uploadPhoto(_ jpeg: Data) async {
+        guard let client, let me else { return }
+        let old = me.avatarPath
+        let path = "\(me.id.uuidString.lowercased())/\(Int(Date().timeIntervalSince1970)).jpg"
+        await run {
+            try await $0.storage.from("avatars").upload(
+                path, data: jpeg,
+                options: FileOptions(cacheControl: "31536000", contentType: "image/jpeg", upsert: true)
+            )
+            try await $0.rpc("set_my_avatar", params: ["path": path]).execute()
+        }
+        if errorMessage == nil, let old { _ = try? await client.storage.from("avatars").remove(paths: [old]) }
+    }
+
+    func removePhoto() async {
+        guard let client, let old = me?.avatarPath else { return }
+        await run { try await $0.rpc("set_my_avatar", params: ["path": AnyJSON.null]).execute() }
+        if errorMessage == nil { _ = try? await client.storage.from("avatars").remove(paths: [old]) }
+    }
+
+    /// The middle square of the image, 256x256, as a JPEG.
+    static func avatarJPEG(from image: NSImage) -> Data? {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let side = min(cg.width, cg.height)
+        let crop = CGRect(x: (cg.width - side) / 2, y: (cg.height - side) / 2, width: side, height: side)
+        guard let square = cg.cropping(to: crop) else { return nil }
+        let size = 256
+        guard let context = CGContext(
+            data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(square, in: CGRect(x: 0, y: 0, width: size, height: size))
+        guard let output = context.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: output).representation(using: .jpeg, properties: [.compressionFactor: 0.85])
+    }
+
     func remove(_ teammate: Teammate) async {
         await run {
             try await $0.rpc("remove_from_team", params: ["member": teammate.id.uuidString]).execute()
@@ -658,7 +712,8 @@ extension Teammate {
             id: row.id,
             name: row.name.isEmpty ? "Teammate" : row.name,
             isOnline: isOnline,
-            colorIndex: row.colorIndex
+            colorIndex: row.colorIndex,
+            avatarPath: row.avatarPath
         )
     }
 }
