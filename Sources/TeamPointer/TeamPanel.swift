@@ -230,6 +230,7 @@ private struct Header: View {
     @EnvironmentObject private var updater: Updater
     @AppStorage(InkSettings.keepInkKey) private var keepInk = false
     @AppStorage(Sounds.enabledKey) private var playSounds = true
+    @AppStorage(Ringtone.styleKey) private var ringtone = Ringtone.Style.classic.rawValue
 
     var body: some View {
         ZStack {
@@ -246,6 +247,11 @@ private struct Header: View {
                     Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Toggle("Sounds", isOn: $playSounds)
+                    Picker("Ringtone", selection: $ringtone) {
+                        ForEach(Ringtone.Style.allCases) { style in
+                            Text(style.title).tag(style.rawValue)
+                        }
+                    }
                     Divider()
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }
@@ -276,6 +282,9 @@ private struct Header: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Settings")
+                .onChange(of: ringtone) { _, value in
+                    Ringtone.playPreview(Ringtone.Style(rawValue: value) ?? .classic)
+                }
                 // A dot on the gear when an update is ready (on the menu, since
                 // menu labels drop overlays).
                 .overlay(alignment: .topTrailing) {

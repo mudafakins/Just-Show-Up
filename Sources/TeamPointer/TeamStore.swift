@@ -123,8 +123,21 @@ final class TeamStore: ObservableObject {
             self.call?.connected = ids
             for id in ids { self.ringingTeammates[id] = nil }
         }
-        engine.onRemoteSharesChanged = { [weak self] ids in self?.sharingTeammates = ids }
+        engine.onRemoteSharesChanged = { [weak self] ids in
+            guard let self else { return }
+            // Chime when a teammate in my room starts or stops sharing (not for a
+            // share that was already on when I joined).
+            if self.call != nil, Date().timeIntervalSince(self.joinedAt) > 1.5 {
+                if !ids.subtracting(self.sharingTeammates).isEmpty {
+                    Sounds.play(.teammateShareStarted)
+                } else if !self.sharingTeammates.subtracting(ids).isEmpty {
+                    Sounds.play(.teammateShareStopped)
+                }
+            }
+            self.sharingTeammates = ids
+        }
         engine.onLocalShareStopped = { [weak self] in
+            if self?.isSharingScreen == true, self?.call != nil { Sounds.play(.shareStopped) }
             self?.isSharingScreen = false
             self?.isDrawingOnOwnScreen = false
         }
@@ -565,6 +578,7 @@ final class TeamStore: ObservableObject {
             do {
                 try await engine.startSharing(source)
                 isSharingScreen = true
+                Sounds.play(.shareStarted)
             } catch {
                 isSharingScreen = false
                 errorMessage = "Couldn't share the screen: \(friendlyMessage(error))"

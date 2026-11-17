@@ -197,7 +197,7 @@ final class InkView: NSView {
     }
 
     override func resetCursorRects() {
-        if isInteractive { addCursorRect(contentRect, cursor: .crosshair) }
+        if isInteractive { addCursorRect(contentRect, cursor: .pencil) }
     }
 
     override func updateTrackingAreas() {
@@ -352,7 +352,12 @@ final class InkView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         guard isInteractive, activeStroke == nil, let point = normalised(event) else { return }
-        guard (0...1).contains(point.x), (0...1).contains(point.y) else { return }
+        guard (0...1).contains(point.x), (0...1).contains(point.y) else {
+            NSCursor.arrow.set()
+            return
+        }
+        // Cursor rects only apply in the key window; the overlay often isn't one.
+        NSCursor.pencil.set()
         guard Date().timeIntervalSince(lastCursorSent) > 0.035 else { return }
         lastCursorSent = Date()
         var message = InkMessage(kind: .cursor, board: boardID)
@@ -362,6 +367,7 @@ final class InkView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         guard isInteractive, activeStroke == nil else { return }
+        NSCursor.arrow.set()
         send(InkMessage(kind: .leave, board: boardID))
     }
 
@@ -527,4 +533,35 @@ struct InkControls: View {
         .background(Capsule().fill(Color.black.opacity(0.55)))
         .padding(8)
     }
+}
+
+extension NSCursor {
+    /// A pencil, tip at the bottom left, outlined in white so it shows on any screen.
+    static let pencil: NSCursor = {
+        let size = NSSize(width: 26, height: 26)
+        let config = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        guard let symbol = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) else { return .crosshair }
+        func tinted(_ color: NSColor) -> NSImage {
+            NSImage(size: symbol.size, flipped: false) { rect in
+                symbol.draw(in: rect)
+                color.set()
+                rect.fill(using: .sourceAtop)
+                return true
+            }
+        }
+        let black = tinted(.black), white = tinted(.white)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let origin = NSPoint(x: 3, y: 3)
+            for dx in [-1.5, 0, 1.5] {
+                for dy in [-1.5, 0, 1.5] where dx != 0 || dy != 0 {
+                    white.draw(at: NSPoint(x: origin.x + dx, y: origin.y + dy), from: .zero, operation: .sourceOver, fraction: 1)
+                }
+            }
+            black.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        // The pencil's tip: bottom left (hot spots count from the top left).
+        return NSCursor(image: image, hotSpot: NSPoint(x: 4.5, y: size.height - 4.5))
+    }()
 }
