@@ -134,9 +134,24 @@ export interface InkPeople {
   name: (user: string) => string;
 }
 
+// A pencil, tip at the bottom left, outlined in white so it shows on any screen.
+const PENCIL_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">
+<g stroke-linejoin="round" stroke-linecap="round">
+<path d="M4 22 L5.6 16.4 L18.4 3.6 a2.3 2.3 0 0 1 3.3 0 l0.7 0.7 a2.3 2.3 0 0 1 0 3.3 L9.6 20.4 Z" fill="#111" stroke="#fff" stroke-width="2"/>
+<path d="M16.2 5.8 L20.2 9.8" stroke="#fff" stroke-width="1.4" fill="none"/>
+</g></svg>`;
+const PENCIL_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(PENCIL_SVG)}") 4 22, crosshair`;
+
 /** Draws a board on a canvas and (when interactive) turns mouse drags into strokes. */
 export class InkView {
-  interactive = false;
+  private _interactive = false;
+  get interactive() {
+    return this._interactive;
+  }
+  set interactive(on: boolean) {
+    this._interactive = on;
+    this.canvas.style.cursor = on ? PENCIL_CURSOR : "";
+  }
   /** Viewer windows letterbox the video, so ink must follow the same fitted rectangle. */
   fitsAspect: boolean;
   fallbackAspect?: number;

@@ -16,7 +16,7 @@ import {
   type Participant,
 } from "livekit-client";
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
-import { startRingtone, stopRingtone } from "./ringtone";
+import { RINGTONES, previewRingtone, ringtone, startRingtone, stopRingtone, type RingtoneID } from "./ringtone";
 import { playSound, sounds } from "./sounds";
 import { checkForUpdate, installUpdate, update, updateBusy } from "./updater";
 
@@ -647,6 +647,7 @@ async function startSharing() {
   const track = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
   if (!track) return;
   S.sharing = true;
+  playSound("shareStarted");
   const settings = track.mediaStreamTrack.getSettings();
   shareAspect = settings.width && settings.height ? settings.width / settings.height : 16 / 9;
   boardFor(S.me.id).reset();
@@ -680,6 +681,7 @@ async function stopSharing() {
 }
 
 function cleanUpSharing() {
+  if (S.sharing && S.call) playSound("shareStopped");
   S.sharing = false;
   S.drawing = false;
   if (shareInfoTimer !== undefined) window.clearInterval(shareInfoTimer);
@@ -714,6 +716,8 @@ const video = document.getElementById("viewer-video") as HTMLVideoElement;
 let viewerInk: InkView | undefined;
 
 function remoteShareStarted(user: string, track: RemoteTrack) {
+  // Chime for a share that starts while I'm in the room (not one already on when I join).
+  if (!S.sharingUsers.has(user) && performance.now() - joinedAt > 1500) playSound("teammateShareStarted");
   S.sharingUsers.set(user, track);
   if (!S.viewing) openViewer(user);
   render();
@@ -721,6 +725,7 @@ function remoteShareStarted(user: string, track: RemoteTrack) {
 
 function remoteShareStopped(user: string) {
   if (!S.sharingUsers.has(user)) return;
+  if (S.call) playSound("teammateShareStopped");
   S.sharingUsers.delete(user);
   boards.delete(user);
   if (S.viewing === user) {
@@ -1045,7 +1050,9 @@ function gearMenu(anchor: HTMLElement) {
      <button data-action="change-name">Change Name…</button><hr />
      <button data-action="dnd">${check(S.doNotDisturb)}Do Not Disturb</button>
      <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button>
-     <button data-action="sounds">${check(sounds.enabled())}Sounds</button><hr />
+     <button data-action="sounds">${check(sounds.enabled())}Sounds</button>
+     <div class="label">Ringtone</div>
+     ${RINGTONES.map((r) => `<button data-action="ringtone" data-id="${r.id}">${check(ringtone.get() === r.id)}${r.title}</button>`).join("")}<hr />
      <button data-action="copy-code">Copy Team Code</button>
      <button data-action="new-code">New Team Code</button>
      <button data-action="leave-team">Leave Team</button><hr />
@@ -1129,6 +1136,13 @@ document.addEventListener("click", (event) => {
       S.doNotDisturb = !S.doNotDisturb;
       localStorage.setItem("dnd", S.doNotDisturb ? "1" : "0");
       return render();
+    case "ringtone": {
+      const id = target.dataset.id as RingtoneID;
+      ringtone.set(id);
+      previewRingtone(id);
+      closeMenu();
+      return;
+    }
     case "sounds":
       sounds.setEnabled(!sounds.enabled());
       closeMenu();
