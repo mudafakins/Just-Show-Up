@@ -16,7 +16,7 @@ import {
   type Participant,
 } from "livekit-client";
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
-import { RINGTONES, previewRingtone, ringtone, startRingtone, stopRingtone, type RingtoneID } from "./ringtone";
+import { CLIPS, TONE_CHOICES, previewRingtone, ringtone, startRingtone, stopPreview, stopRingtone, type Ringtone } from "./ringtone";
 import { playSound, sounds } from "./sounds";
 import { autoUpdate, checkForUpdate, installIfIdle, installUpdate, update, updateBusy } from "./updater";
 
@@ -1116,6 +1116,7 @@ function renderTeam() {
 let menuEl: HTMLDivElement | undefined;
 
 function closeMenu() {
+  if (menuEl?.querySelector(".ringtones")) stopPreview();
   menuEl?.remove();
   menuEl = undefined;
 }
@@ -1136,6 +1137,29 @@ function openMenu(anchor: HTMLElement, items: string) {
   if (needed > window.innerHeight) void invoke("set_panel_height", { height: needed });
 }
 
+/** Settings → Ringtone: every sound, with a preview when you point at one. */
+function ringtoneMenu(scrollTop = 0) {
+  const gear = panelEl.querySelector<HTMLElement>(".gear");
+  if (!gear) return;
+  const current = ringtone.get().id;
+  const row = (r: Ringtone) =>
+    `<button data-action="ringtone" data-id="${esc(r.id)}">${current === r.id ? "✓ " : " "}${esc(r.title)}</button>`;
+  openMenu(
+    gear,
+    `<div class="label">Point at a sound to hear it. Click to choose it.</div>
+     <div class="ringtones">
+       ${CLIPS.length ? `<div class="label">Sounds</div>${CLIPS.map(row).join("")}` : ""}
+       <div class="label">Tones</div>${TONE_CHOICES.map(row).join("")}
+     </div>`,
+  );
+  const list = menuEl!.querySelector<HTMLElement>(".ringtones")!;
+  list.scrollTop = scrollTop;
+  for (const button of list.querySelectorAll<HTMLElement>("button[data-id]")) {
+    button.addEventListener("mouseenter", () => previewRingtone(button.dataset.id!));
+    button.addEventListener("mouseleave", stopPreview);
+  }
+}
+
 function gearMenu(anchor: HTMLElement) {
   const check = (on: boolean) => (on ? "✓ " : " ");
   openMenu(
@@ -1146,8 +1170,7 @@ function gearMenu(anchor: HTMLElement) {
      ${S.me?.avatarPath ? '<button data-action="remove-photo">Remove Photo</button>' : ""}<hr />
      <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button>
      <button data-action="sounds">${check(sounds.enabled())}Sounds</button>
-     <div class="label">Ringtone</div>
-     ${RINGTONES.map((r) => `<button data-action="ringtone" data-id="${r.id}">${check(ringtone.get() === r.id)}${r.title}</button>`).join("")}<hr />
+     <button data-action="ringtone-list">Ringtone: ${esc(ringtone.get().title)}…</button><hr />
      <button data-action="copy-code">Copy Team Code</button>
      <button data-action="new-code">New Team Code</button>
      <button data-action="leave-team">Leave Team</button><hr />
@@ -1238,11 +1261,13 @@ document.addEventListener("click", (event) => {
       S.doNotDisturb = !S.doNotDisturb;
       localStorage.setItem("dnd", S.doNotDisturb ? "1" : "0");
       return render();
+    case "ringtone-list":
+      return ringtoneMenu();
     case "ringtone": {
-      const id = target.dataset.id as RingtoneID;
-      ringtone.set(id);
-      previewRingtone(id);
-      closeMenu();
+      const list = menuEl?.querySelector(".ringtones");
+      const scroll = list?.scrollTop ?? 0;
+      ringtone.set(id!);
+      ringtoneMenu(scroll);
       return;
     }
     case "sounds":

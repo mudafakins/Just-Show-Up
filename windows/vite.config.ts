@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 // Two pages: the panel (index.html) and the see-through drawing layer (overlay.html).
 export default defineConfig({
   clearScreen: false,
-  server: { port: 5173, strictPort: true },
+  // The ringtone clips live in ../Ringtones (shared with the Mac app).
+  server: { port: 5173, strictPort: true, fs: { allow: [".."] } },
   build: {
     target: "es2022",
     rollupOptions: {

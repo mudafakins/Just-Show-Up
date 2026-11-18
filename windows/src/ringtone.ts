@@ -1,19 +1,40 @@
-// The sound for an incoming call, the same choices as the Mac app's Ringtone.swift.
+// The sound for an incoming call, the same choices as the Mac app's Ringtone.swift:
+// the sound clips in Ringtones/ (bundled into the app), then simple generated tones.
 // Each person picks their own in Settings → Ringtone.
 
-export const RINGTONES = [
+const TONES = [
   { id: "classic", title: "Classic Phone" },
   { id: "marimba", title: "Marimba" },
   { id: "chime", title: "Chime" },
   { id: "digital", title: "Digital" },
   { id: "gentle", title: "Gentle" },
 ] as const;
-export type RingtoneID = (typeof RINGTONES)[number]["id"];
+type ToneID = (typeof TONES)[number]["id"];
+
+export type Ringtone = { id: string; title: string; url?: string; tone?: ToneID };
+
+// "01 - Title.mp3" → id "clip:01 - Title", shown as "Title" (same ids as the Mac).
+const clipFiles = import.meta.glob("../../Ringtones/*.mp3", { eager: true, query: "?url", import: "default" }) as Record<
+  string,
+  string
+>;
+export const CLIPS: Ringtone[] = Object.entries(clipFiles)
+  .map(([path, url]) => {
+    const name = decodeURIComponent(path.split("/").pop()!.replace(/\.mp3$/i, ""));
+    return { id: `clip:${name}`, title: name.replace(/^\d+\s*-\s*/, ""), url };
+  })
+  .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+export const TONE_CHOICES: Ringtone[] = TONES.map((t) => ({ id: t.id, title: t.title, tone: t.id }));
+export const RINGTONES: Ringtone[] = [...CLIPS, ...TONE_CHOICES];
 
 const KEY = "ringtone";
+const defaultID = () => CLIPS[0]?.id ?? "classic";
 export const ringtone = {
-  get: (): RingtoneID => (RINGTONES.find((r) => r.id === localStorage.getItem(KEY))?.id ?? "classic"),
-  set: (id: RingtoneID) => localStorage.setItem(KEY, id),
+  get: (): Ringtone => {
+    const saved = localStorage.getItem(KEY) ?? defaultID();
+    return RINGTONES.find((r) => r.id === saved) ?? RINGTONES.find((r) => r.id === defaultID()) ?? TONE_CHOICES[0];
+  },
+  set: (id: string) => localStorage.setItem(KEY, id),
 };
 
 let context: AudioContext | undefined;
@@ -57,7 +78,7 @@ function mallet(ctx: AudioContext, start: number, frequency: number, decay: numb
 }
 
 /** Plays one cycle; returns how long a cycle lasts (seconds). */
-function cycle(ctx: AudioContext, id: RingtoneID): number {
+function cycle(ctx: AudioContext, id: ToneID): number {
   const t = ctx.currentTime + 0.05;
   switch (id) {
     case "classic":
@@ -81,14 +102,34 @@ function cycle(ctx: AudioContext, id: RingtoneID): number {
   }
 }
 
+let clip: HTMLAudioElement | undefined;
+let clipTimer: number | undefined;
+let preview: HTMLAudioElement | undefined;
+let pendingPreview: number | undefined;
+
 export function startRingtone() {
   stopRingtone();
+  stopPreview();
+  const choice = ringtone.get();
+  if (choice.url) {
+    // Play the clip, pause a moment, play it again: back to back, short clips
+    // would blur into one long noise.
+    const audio = new Audio(choice.url);
+    audio.volume = 0.8;
+    audio.addEventListener("ended", () => {
+      clipTimer = window.setTimeout(() => {
+        if (clip === audio) void audio.play().catch(() => {});
+      }, 1200);
+    });
+    clip = audio;
+    void audio.play().catch(() => {});
+    return;
+  }
   const ctx = new AudioContext();
   context = ctx;
   void ctx.resume();
-  const id = ringtone.get();
-  const seconds = cycle(ctx, id);
-  timer = window.setInterval(() => cycle(ctx, id), seconds * 1000);
+  const seconds = cycle(ctx, choice.tone!);
+  timer = window.setInterval(() => cycle(ctx, choice.tone!), seconds * 1000);
 }
 
 export function stopRingtone() {
@@ -96,13 +137,37 @@ export function stopRingtone() {
   timer = undefined;
   void context?.close();
   context = undefined;
+  if (clipTimer !== undefined) window.clearTimeout(clipTimer);
+  clipTimer = undefined;
+  clip?.pause();
+  clip = undefined;
 }
 
-/** One cycle of a ringtone, for choosing one in Settings. */
-export function previewRingtone(id: RingtoneID) {
-  if (context) return; // a real call is ringing
+/** Plays a ringtone once, for choosing one in Settings. Waits a moment first, so
+ *  sweeping the pointer down the list stays quiet. */
+export function previewRingtone(id: string) {
+  stopPreview();
+  if (context || clip) return; // a real call is ringing
+  const choice = RINGTONES.find((r) => r.id === id);
+  if (!choice) return;
+  pendingPreview = window.setTimeout(() => {
+    if (choice.url) {
+      preview = new Audio(choice.url);
+      preview.volume = 0.8;
+      void preview.play().catch(() => {});
+    } else {
+      previewContext = new AudioContext();
+      void previewContext.resume();
+      cycle(previewContext, choice.tone!);
+    }
+  }, 150);
+}
+
+export function stopPreview() {
+  if (pendingPreview !== undefined) window.clearTimeout(pendingPreview);
+  pendingPreview = undefined;
+  preview?.pause();
+  preview = undefined;
   void previewContext?.close();
-  previewContext = new AudioContext();
-  void previewContext.resume();
-  cycle(previewContext, id);
+  previewContext = undefined;
 }

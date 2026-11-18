@@ -16,6 +16,7 @@ on:
     branches: [main]
     paths:
       - "windows/**"
+      - "Ringtones/**"
       - ".github/workflows/windows.yml"
   release:
     types: [published]

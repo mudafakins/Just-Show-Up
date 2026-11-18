@@ -83,6 +83,7 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .menu button:hover:not(:disabled) { background: var(--accent); color: white; }
 .menu button:disabled { opacity: 0.45; cursor: default; }
 .menu .label { padding: 5px 10px; color: var(--muted); font-size: 12px; }
+.menu .ringtones { max-height: 340px; overflow-y: auto; }
 .menu hr { border: 0; height: 1px; background: var(--line); margin: 4px 6px; }
 
 .welcome { padding: 16px; display: grid; gap: 10px; }
