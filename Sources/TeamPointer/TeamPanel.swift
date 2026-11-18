@@ -197,6 +197,7 @@ private struct TeamList: View {
             VStack(spacing: 0) {
                 if search.trimmed.isEmpty {
                     TeamCodeRow()
+                    if let me = team.me { MeRow(me: me) }
                 }
                 ForEach(visibleTeammates) { teammate in
                     TeammateRow(teammate: teammate)
@@ -488,6 +489,51 @@ private extension View {
 
 extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+/// Me, at the top of the team: my photo, name and what I'm doing. Clicking it
+/// changes my photo; right-click for the name and photo options.
+private struct MeRow: View {
+    @EnvironmentObject private var team: TeamStore
+    let me: Teammate
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Avatar(teammate: me)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(me.name)
+                        .font(.system(size: 15, weight: .medium))
+                        .lineLimit(1)
+                    Text("(You)")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                Text(status)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .rowStyle(isHovered: isHovered)
+        .onHover { isHovered = $0 }
+        .onTapGesture { team.choosePhoto() }
+        .help(me.avatarPath == nil ? "Click to add your photo" : "Click to change your photo")
+        .contextMenu {
+            Button("Change Name…") { team.isEditingName = true }
+            Button(me.avatarPath == nil ? "Add Photo…" : "Change Photo…") { team.choosePhoto() }
+            if me.avatarPath != nil {
+                Button("Remove Photo") { Task { await team.removePhoto() } }
+            }
+        }
+    }
+
+    private var status: String {
+        if let call = team.call { return call.isConnecting ? "Joining \(Rooms.name(call.number))…" : "In \(Rooms.name(call.number))" }
+        if team.doNotDisturb { return "Do Not Disturb" }
+        return "Online"
+    }
 }
 
 private struct TeammateRow: View {
