@@ -23,18 +23,40 @@ final class Updater: ObservableObject {
 
     /// Shows a short message in the panel (wired to the team's notice line).
     var onMessage: (String) -> Void = { _ in }
+    /// Whether restarting now would interrupt anything (a room, a ringing call).
+    var isIdle: () -> Bool = { true }
+
+    static let autoKey = "autoUpdate"
+    /// Install new versions without asking (on by default), when nothing is going on.
+    static var installsAutomatically: Bool {
+        UserDefaults.standard.object(forKey: autoKey) as? Bool ?? true
+    }
 
     private var timer: Timer?
+    private var idleTimer: Timer?
 
     static var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
 
     func start() {
-        Task { await check(userInitiated: false) }
+        Task {
+            await check(userInitiated: false)
+            await installIfIdle()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 4 * 60 * 60, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.check(userInitiated: false) }
         }
+        // A waiting update installs once I'm out of rooms and calls.
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.installIfIdle() }
+        }
+    }
+
+    /// Installs a waiting update when updating automatically and nothing is going on.
+    func installIfIdle() async {
+        guard Self.installsAutomatically, available != nil, !isBusy, isIdle() else { return }
+        await install()
     }
 
     // MARK: checking

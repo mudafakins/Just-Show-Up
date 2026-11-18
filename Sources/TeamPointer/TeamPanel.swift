@@ -232,6 +232,7 @@ private struct Header: View {
     @AppStorage(InkSettings.keepInkKey) private var keepInk = false
     @AppStorage(Sounds.enabledKey) private var playSounds = true
     @AppStorage(Ringtone.styleKey) private var ringtone = Ringtone.Style.classic.rawValue
+    @AppStorage(Updater.autoKey) private var autoUpdate = true
 
     var body: some View {
         ZStack {
@@ -274,6 +275,7 @@ private struct Header: View {
                         Button("Check for Updates") { Task { await updater.check(userInitiated: true) } }
                             .disabled(updater.isBusy)
                     }
+                    Toggle("Update Automatically", isOn: $autoUpdate)
                     Text("Version \(Updater.currentVersion)")
                     Divider()
                     Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }

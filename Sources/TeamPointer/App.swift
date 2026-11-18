@@ -71,6 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         team.onRing = { [weak self] in self?.showPopover() }
 
         updater.onMessage = { [weak self] message in self?.team.notice = message }
+        updater.isIdle = { [weak self] in
+            guard let team = self?.team else { return false }
+            return team.call == nil && team.incomingRing == nil && !team.isSharingScreen
+        }
         updater.start()
     }
 
