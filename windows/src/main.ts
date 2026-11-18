@@ -810,6 +810,11 @@ function render() {
   if (S.phase === "team") renderTeam();
   if (S.phase === "welcome") renderWelcome();
   panelEl.querySelector(".gear")?.classList.toggle("has-update", !!update.available);
+  const dnd = panelEl.querySelector<HTMLElement>(".dnd");
+  if (dnd) {
+    dnd.classList.toggle("on", S.doNotDisturb);
+    dnd.title = S.doNotDisturb ? "Do Not Disturb is on. Click to turn it off." : "Do Not Disturb";
+  }
   reportHeight();
 }
 
@@ -854,7 +859,7 @@ function buildSkeleton() {
     });
   } else {
     panelEl.innerHTML = `
-      <div class="header">Just Show Up!<button class="gear" data-action="gear" title="Settings">⚙︎</button></div>
+      <div class="header">Just Show Up!<button class="gear" data-action="gear" title="Settings">⚙︎</button><button class="dnd" data-action="dnd" title="Do Not Disturb"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button></div>
       <div class="pad" id="search-wrap"><input id="search" placeholder="Find Teammates" /></div>
       <div class="pad inline" id="name-wrap" hidden>
         <input id="name-input" placeholder="Your name" />
@@ -1139,7 +1144,6 @@ function gearMenu(anchor: HTMLElement) {
      <button data-action="change-name">Change Name…</button>
      <button data-action="choose-photo">${S.me?.avatarPath ? "Change Photo…" : "Add Photo…"}</button>
      ${S.me?.avatarPath ? '<button data-action="remove-photo">Remove Photo</button>' : ""}<hr />
-     <button data-action="dnd">${check(S.doNotDisturb)}Do Not Disturb</button>
      <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button>
      <button data-action="sounds">${check(sounds.enabled())}Sounds</button>
      <div class="label">Ringtone</div>

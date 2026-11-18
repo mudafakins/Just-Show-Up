@@ -33,6 +33,10 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .header { position: relative; text-align: center; padding: 12px 14px 10px; font-weight: 700; font-size: 14px; }
 .gear { position: absolute; left: 12px; top: 9px; width: 26px; height: 26px; border-radius: 13px; color: var(--muted); font-size: 16px; }
 .gear:hover { background: var(--hover); }
+.dnd { position: absolute; right: 12px; top: 9px; width: 26px; height: 26px; border-radius: 13px; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.dnd:hover { background: var(--hover); }
+.dnd.on { color: #af52de; }
+.dnd.on path { fill: currentColor; }
 .gear.has-update::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 4px; background: #ff3b30; }
 .pad { padding: 0 12px 6px; }
 .inline { display: flex; gap: 6px; align-items: center; }
