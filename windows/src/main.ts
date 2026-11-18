@@ -1031,6 +1031,16 @@ function roomRow(n: number) {
   </div>`;
 }
 
+/** Me, at the top of the team: photo, name and what I'm doing. Click to change the photo. */
+function meRow(me: Teammate) {
+  let status = S.doNotDisturb ? "Do Not Disturb" : "Online";
+  if (S.call) status = S.call.connecting ? `Joining ${roomName(S.call.number)}…` : `In ${roomName(S.call.number)}`;
+  return `<div class="row clickable" data-action="choose-photo" title="Click to ${me.avatarPath ? "change" : "add"} your photo">
+    ${avatar(me)}
+    <div class="text"><div class="title">${esc(me.name)} <span class="you">(You)</span></div><div class="sub">${esc(status)}</div></div>
+  </div>`;
+}
+
 function teammateRow(t: Teammate) {
   const online = isOnline(t);
   const theirRoom = roomOf(t);
@@ -1088,6 +1098,7 @@ function renderTeam() {
       <div class="icon">＋</div>
       <div class="text"><div class="title" id="invite-title">Invite Teammates</div>
         <div class="sub">${S.teamCode ? `Team code ${esc(S.teamCode)}` : "…"}</div></div></div>`;
+    if (S.me) html += meRow(S.me);
   }
   html += visible.map(teammateRow).join("");
   if (query && visible.length === 0) html += `<div class="notice">No teammate matches “${esc(S.search.trim())}”.</div>`;
