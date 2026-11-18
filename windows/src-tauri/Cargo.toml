@@ -1,6 +1,6 @@
 [package]
 name = "just-show-up"
-version = "0.2.3"
+version = "0.3.0"
 description = "Just Show Up! for Windows"
 edition = "2021"
 
