@@ -13,6 +13,18 @@ export const update = {
 };
 
 let busy = false;
+
+const AUTO_KEY = "autoUpdate";
+/** Install new versions without asking (on by default), when nothing is going on. */
+export const autoUpdate = {
+  get: () => localStorage.getItem(AUTO_KEY) !== "0",
+  set: (on: boolean) => localStorage.setItem(AUTO_KEY, on ? "1" : "0"),
+};
+
+/** Installs a waiting update when updating automatically and `isIdle` says nothing is going on. */
+export async function installIfIdle(isIdle: () => boolean) {
+  if (autoUpdate.get() && update.available && !busy && isIdle()) await installUpdate();
+}
 export const updateBusy = () => busy;
 
 void getVersion().then((v) => {

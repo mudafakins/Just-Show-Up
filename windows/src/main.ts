@@ -18,7 +18,7 @@ import {
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
 import { RINGTONES, previewRingtone, ringtone, startRingtone, stopRingtone, type RingtoneID } from "./ringtone";
 import { playSound, sounds } from "./sounds";
-import { checkForUpdate, installUpdate, update, updateBusy } from "./updater";
+import { autoUpdate, checkForUpdate, installIfIdle, installUpdate, update, updateBusy } from "./updater";
 
 // ---------------------------------------------------------------- model
 
@@ -1154,6 +1154,7 @@ function gearMenu(anchor: HTMLElement) {
            : `<button data-action="install-update" ${updateBusy() ? "disabled" : ""}>Update to ${esc(update.available.version)}…</button>`
          : `<button data-action="check-update" ${updateBusy() ? "disabled" : ""}>Check for Updates</button>`
      }
+     <button data-action="auto-update">${check(autoUpdate.get())}Update Automatically</button>
      <div class="label">Version ${esc(update.current)}</div><hr />
      <button data-action="quit">Quit Just Show Up!</button>`,
   );
@@ -1247,6 +1248,10 @@ document.addEventListener("click", (event) => {
     case "keep-ink":
       keepInk.set(!keepInk.get());
       return renderViewerControls();
+    case "auto-update":
+      autoUpdate.set(!autoUpdate.get());
+      closeMenu();
+      return;
     case "check-update":
       closeMenu();
       return void checkForUpdate(true);
@@ -1290,5 +1295,8 @@ update.onChange = (message) => {
   if (message !== undefined) S.notice = message;
   render();
 };
-void checkForUpdate(false);
+// With Update Automatically on, a waiting update installs once I'm out of rooms and calls.
+const idleForUpdate = () => !S.call && !S.incoming && !S.sharing;
+void checkForUpdate(false).then(() => installIfIdle(idleForUpdate));
 setInterval(() => void checkForUpdate(false), 4 * 60 * 60 * 1000);
+setInterval(() => void installIfIdle(idleForUpdate), 60 * 1000);
