@@ -10,3 +10,7 @@ Config.local.*
 *.local.plist
 .env
 .env.*
+
+# Downloaded installers kept locally
+Windows Installer from Github/
+.DS_Store
