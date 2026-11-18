@@ -66,6 +66,8 @@ final class TeamStore: ObservableObject {
     @Published var errorMessage: String?
     /// The "change my name" field is showing in the panel.
     @Published var isEditingName = false
+    /// The ringtone list is showing in place of the rooms and teammates.
+    @Published var isChoosingRingtone = false
 
     // Rooms
     /// Set while I'm in a room.

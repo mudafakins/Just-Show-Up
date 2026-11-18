@@ -1,7 +1,8 @@
 import AppKit
 
-/// The sound for an incoming call, generated in code so the app ships no audio
-/// files. Each person picks their own in Settings → Ringtone.
+/// The sound for an incoming call. Each person picks their own in Settings →
+/// Ringtone: one of the sound clips that ship with the app (Ringtones/), or one of
+/// the simple tones generated in code.
 @MainActor
 enum Ringtone {
     enum Style: String, CaseIterable, Identifiable {
@@ -20,37 +21,98 @@ enum Ringtone {
         }
     }
 
+    /// One entry in the ringtone list.
+    struct Choice: Identifiable, Hashable {
+        enum Source: Hashable { case clip(URL), generated(Style) }
+        let id: String
+        let title: String
+        let source: Source
+    }
+
     static let styleKey = "ringtone"
 
-    static var style: Style {
-        get { Style(rawValue: UserDefaults.standard.string(forKey: styleKey) ?? "") ?? .classic }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: styleKey) }
+    /// The bundled clips, in file-name order ("01 - Title.mp3" shows as "Title").
+    static let clips: [Choice] = {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("Ringtones"),
+              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        else { return [] }
+        return files
+            .filter { ["mp3", "m4a", "wav"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .map { url in
+                let name = url.deletingPathExtension().lastPathComponent
+                let title = name.replacingOccurrences(of: #"^\d+\s*-\s*"#, with: "", options: .regularExpression)
+                return Choice(id: "clip:" + name, title: title, source: .clip(url))
+            }
+    }()
+
+    static let tones: [Choice] = Style.allCases.map { Choice(id: $0.rawValue, title: $0.title, source: .generated($0)) }
+
+    static var all: [Choice] { clips + tones }
+
+    /// The first clip, unless the app was built without them.
+    static var defaultID: String { clips.first?.id ?? Style.classic.rawValue }
+
+    static var current: Choice {
+        let saved = UserDefaults.standard.string(forKey: styleKey) ?? defaultID
+        return all.first { $0.id == saved } ?? all.first { $0.id == defaultID } ?? tones[0]
     }
 
     private static var sound: NSSound?
+    private static var repeatTimer: Timer?
     private static var preview: NSSound?
 
     static func start() {
         stop()
-        guard let sound = NSSound(data: makeWAV(style)) else { return }
-        sound.loops = true
+        stopPreview()
+        let choice = current
+        guard let sound = makeSound(choice) else { return }
         sound.volume = 0.8
-        sound.play()
+        switch choice.source {
+        case .generated:
+            sound.loops = true
+            sound.play()
+        case .clip:
+            // Play the clip, pause a moment, play it again: back to back, short
+            // clips would blur into one long noise.
+            sound.play()
+            let gap = max(sound.duration, 0.5) + 1.2
+            repeatTimer = Timer.scheduledTimer(withTimeInterval: gap, repeats: true) { _ in
+                Task { @MainActor in
+                    Ringtone.sound?.stop()
+                    Ringtone.sound?.play()
+                }
+            }
+        }
         self.sound = sound
     }
 
     static func stop() {
+        repeatTimer?.invalidate()
+        repeatTimer = nil
         sound?.stop()
         sound = nil
     }
 
-    /// Plays one cycle of a ringtone, for choosing one in Settings.
-    static func playPreview(_ style: Style) {
-        preview?.stop()
-        guard sound == nil, let sound = NSSound(data: makeWAV(style)) else { return }
+    /// Plays a ringtone once, for choosing one in Settings.
+    static func playPreview(_ choice: Choice) {
+        stopPreview()
+        guard sound == nil, let sound = makeSound(choice) else { return }
         sound.volume = 0.8
         sound.play()
         preview = sound
+    }
+
+    static func stopPreview() {
+        preview?.stop()
+        preview = nil
+    }
+
+    private static func makeSound(_ choice: Choice) -> NSSound? {
+        switch choice.source {
+        case .clip(let url): NSSound(contentsOf: url, byReference: true)
+        case .generated(let style): NSSound(data: makeWAV(style))
+        }
     }
 
     // MARK: sounds

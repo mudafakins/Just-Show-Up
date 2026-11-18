@@ -153,6 +153,9 @@ private struct TeamList: View {
     var body: some View {
         VStack(spacing: 0) {
             Header()
+            if team.isChoosingRingtone {
+                RingtonePicker()
+            } else {
             if team.isEditingName {
                 RenameBar()
                     .padding(.horizontal, 12)
@@ -220,6 +223,7 @@ private struct TeamList: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
             }
+            }
         }
         .task { await team.reloadTeam() }
     }
@@ -231,8 +235,13 @@ private struct Header: View {
     @EnvironmentObject private var updater: Updater
     @AppStorage(InkSettings.keepInkKey) private var keepInk = false
     @AppStorage(Sounds.enabledKey) private var playSounds = true
-    @AppStorage(Ringtone.styleKey) private var ringtone = Ringtone.Style.classic.rawValue
+    @AppStorage(Ringtone.styleKey) private var ringtone = ""
     @AppStorage(Updater.autoKey) private var autoUpdate = true
+
+    private var ringtoneTitle: String {
+        _ = ringtone  // redraw when it changes
+        return Ringtone.current.title
+    }
 
     var body: some View {
         ZStack {
@@ -252,11 +261,7 @@ private struct Header: View {
                     }
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Toggle("Sounds", isOn: $playSounds)
-                    Picker("Ringtone", selection: $ringtone) {
-                        ForEach(Ringtone.Style.allCases) { style in
-                            Text(style.title).tag(style.rawValue)
-                        }
-                    }
+                    Button("Ringtone: \(ringtoneTitle)…") { team.isChoosingRingtone = true }
                     Divider()
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }
@@ -288,9 +293,6 @@ private struct Header: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Settings")
-                .onChange(of: ringtone) { _, value in
-                    Ringtone.playPreview(Ringtone.Style(rawValue: value) ?? .classic)
-                }
                 // A dot on the gear when an update is ready (on the menu, since
                 // menu labels drop overlays).
                 .overlay(alignment: .topTrailing) {
@@ -316,6 +318,121 @@ private struct Header: View {
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 10)
+    }
+}
+
+/// Settings → Ringtone: every sound, with a preview when you point at one.
+private struct RingtonePicker: View {
+    @EnvironmentObject private var team: TeamStore
+    @AppStorage(Ringtone.styleKey) private var saved = ""
+    @State private var hovered: String?
+    @State private var pendingPreview: Task<Void, Never>?
+
+    private var selectedID: String {
+        _ = saved  // redraw when it changes
+        return Ringtone.current.id
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: close) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                        Text("Back")
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+            .overlay(Text("Ringtone").font(.system(size: 12, weight: .semibold)))
+            .padding(.horizontal, 14)
+            .padding(.bottom, 4)
+
+            Text("Point at a sound to hear it. Click to choose it.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    if !Ringtone.clips.isEmpty { section("Sounds", Ringtone.clips) }
+                    section("Tones", Ringtone.tones)
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 8)
+            }
+            .frame(height: 400)
+        }
+        .onExitCommand(perform: close)
+        .onDisappear {
+            pendingPreview?.cancel()
+            Ringtone.stopPreview()
+        }
+    }
+
+    private func section(_ title: String, _ choices: [Ringtone.Choice]) -> some View {
+        VStack(spacing: 0) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+            ForEach(choices) { row($0) }
+        }
+    }
+
+    private func row(_ choice: Ringtone.Choice) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .opacity(choice.id == selectedID ? 1 : 0)
+                .frame(width: 14)
+            Text(choice.title)
+                .font(.system(size: 13))
+            Spacer()
+            if hovered == choice.id {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(hovered == choice.id ? Color.primary.opacity(0.08) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside {
+                hovered = choice.id
+                // A short wait, so sweeping the pointer down the list stays quiet.
+                pendingPreview?.cancel()
+                pendingPreview = Task {
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                    Ringtone.playPreview(choice)
+                }
+            } else if hovered == choice.id {
+                hovered = nil
+                pendingPreview?.cancel()
+                Ringtone.stopPreview()
+            }
+        }
+        .onTapGesture { saved = choice.id }
+    }
+
+    private func close() {
+        team.isChoosingRingtone = false
     }
 }
 
