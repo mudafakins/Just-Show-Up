@@ -250,7 +250,6 @@ private struct Header: View {
                         }
                         Divider()
                     }
-                    Toggle("Do Not Disturb", isOn: $team.doNotDisturb)
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Toggle("Sounds", isOn: $playSounds)
                     Picker("Ringtone", selection: $ringtone) {
@@ -281,7 +280,7 @@ private struct Header: View {
                     Button("Quit \(AppInfo.name)") { NSApplication.shared.terminate(nil) }
                         .keyboardShortcut("q")
                 } label: {
-                    Image(systemName: team.doNotDisturb ? "moon.fill" : "gearshape")
+                    Image(systemName: "gearshape")
                         .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                 }
@@ -302,6 +301,16 @@ private struct Header: View {
                 }
 
                 Spacer()
+
+                Button { team.doNotDisturb.toggle() } label: {
+                    Image(systemName: team.doNotDisturb ? "moon.fill" : "moon")
+                        .font(.system(size: 14))
+                        .foregroundStyle(team.doNotDisturb ? AnyShapeStyle(Color.purple) : AnyShapeStyle(.secondary))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(team.doNotDisturb ? "Do Not Disturb is on. Click to turn it off." : "Do Not Disturb")
             }
         }
         .padding(.horizontal, 14)
