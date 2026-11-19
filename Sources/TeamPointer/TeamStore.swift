@@ -114,6 +114,7 @@ final class TeamStore: ObservableObject {
         self.client = client
 
         engine.onSoundboard = { id in
+            if id == "stop" { return Soundboard.stop() }
             // Each person can silence these with Settings → Sounds.
             if Sounds.isEnabled { Soundboard.play(id) }
         }
@@ -608,6 +609,12 @@ final class TeamStore: ObservableObject {
     func playSoundboard(_ id: String) {
         Soundboard.play(id)
         if call != nil { engine.sendSoundboard(id) }
+    }
+
+    /// Stops the soundboard clip here and, when I'm in a room, for everyone in it.
+    func stopSoundboard() {
+        Soundboard.stop()
+        if call != nil { engine.sendSoundboard("stop") }
     }
 
     func toggleMute() {

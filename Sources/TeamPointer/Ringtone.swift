@@ -213,6 +213,11 @@ enum Soundboard {
         sound = next
     }
 
+    static func stop() {
+        sound?.stop()
+        sound = nil
+    }
+
     /// A picture for each clip's tile, from its name ("Hey Hey 3" → 👋).
     static func emoji(for title: String) -> String {
         let name = title.lowercased()

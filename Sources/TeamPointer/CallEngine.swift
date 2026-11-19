@@ -35,7 +35,7 @@ final class CallEngine {
     var onDrawModeExited: (() -> Void)?
     /// Who is audibly speaking right now (not counting me).
     var onSpeakersChanged: ((Set<UUID>) -> Void)?
-    /// A teammate in the room played a soundboard clip (its ringtone id).
+    /// A teammate in the room played a soundboard clip (its ringtone id), or "stop".
     var onSoundboard: ((String) -> Void)?
 
     private var room: Room?

@@ -355,8 +355,23 @@ private struct SoundboardCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Soundboard")
-                .font(.system(size: 12, weight: .semibold))
+            HStack {
+                Text("Soundboard")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button { team.stopSoundboard() } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "stop.fill").font(.system(size: 9))
+                        Text("Stop").font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.primary.opacity(0.1)))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(team.call == nil ? "Stop the sound" : "Stop the sound for everyone in the room")
+            }
             Text(team.call.map { "Everyone in Room \($0.number) hears it." } ?? "Only you hear it. Join a room to play it for others.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
