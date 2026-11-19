@@ -79,6 +79,12 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .round.blue { background: var(--accent); color: white; }
 .bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin: 1px 8px; border-radius: 10px; }
 .bar.call { background: rgba(52, 199, 89, 0.14); }
+.bar.file { background: rgba(59, 130, 246, 0.14); }
+.bar.file .title, .bar.saved .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar.saved { background: rgba(52, 199, 89, 0.12); padding: 7px 12px; }
+.row .sub.xfer { color: var(--accent); }
+.xfer-bar { height: 3px; margin-top: 3px; border-radius: 2px; background: var(--chip); overflow: hidden; }
+.xfer-bar span { display: block; height: 100%; background: var(--accent); transition: width 150ms linear; }
 .bar.ring { background: rgba(255, 149, 0, 0.2); }
 .bar .text { flex: 1; min-width: 0; }
 .bar .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

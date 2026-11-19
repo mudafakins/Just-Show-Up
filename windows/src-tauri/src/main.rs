@@ -3,6 +3,8 @@
 // (src/*.ts); this file only manages windows and the tray.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod files;
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
@@ -270,8 +272,19 @@ fn main() {
             close_overlay,
             set_overlay_interactive,
             set_picking,
-            quit
+            quit,
+            files::pick_files,
+            files::prepare_send,
+            files::read_chunk,
+            files::file_sha256,
+            files::remove_temporary,
+            files::recv_begin,
+            files::recv_write,
+            files::recv_finish,
+            files::recv_abort,
+            files::reveal
         ])
+        .manage(files::Incoming::default())
         .setup(|app| {
             let handle = app.handle().clone();
 
