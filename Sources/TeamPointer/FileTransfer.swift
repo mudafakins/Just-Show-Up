@@ -90,6 +90,8 @@ final class FileTransfers: ObservableObject {
     var iceServers: () async -> [IceServer] = { IceServer.defaults }
 
     private var links: [String: PeerLink] = [:]
+    /// Connection details that arrived before their connection existed.
+    private var earlyIce: [String: [FileSignal.Ice]] = [:]
     private var outgoingFiles: [String: URL] = [:]
     private var expiry: [String: Task<Void, Never>] = [:]
 
@@ -204,8 +206,8 @@ final class FileTransfers: ObservableObject {
             }
 
         case .ice:
-            guard let ice = signal.ice else { return }
-            links[signal.id]?.add(ice)
+            guard transfer != nil, let ice = signal.ice else { return }
+            if let link = links[signal.id] { link.add(ice) } else { earlyIce[signal.id, default: []].append(ice) }
         }
     }
 
@@ -216,6 +218,7 @@ final class FileTransfers: ObservableObject {
         let link = PeerLink(id: transfer.id, servers: await iceServers())
         links[transfer.id] = link
         wire(link, transfer: transfer, me: me)
+        earlyIce.removeValue(forKey: transfer.id)?.forEach(link.add)
         link.sendFile(file, onProgress: { [weak self] sent in
             Task { @MainActor in self?.progress(transfer.id, sent) }
         }, onDone: { [weak self] ok in
@@ -245,6 +248,7 @@ final class FileTransfers: ObservableObject {
         let link = PeerLink(id: transfer.id, servers: await iceServers())
         links[transfer.id] = link
         wire(link, transfer: transfer, me: me)
+        earlyIce.removeValue(forKey: transfer.id)?.forEach(link.add)
         link.receiveFile(named: transfer.fileName, size: transfer.size, into: destination, onProgress: { [weak self] got in
             Task { @MainActor in self?.progress(transfer.id, got) }
         }, onChecking: { [weak self] in
@@ -329,6 +333,7 @@ final class FileTransfers: ObservableObject {
             try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
         }
         lastSample[id] = nil
+        earlyIce[id] = nil
         active.removeAll { $0.id == id }
     }
 
@@ -441,6 +446,10 @@ private final class PeerLink: NSObject, LKRTCPeerConnectionDelegate, LKRTCDataCh
     private let queue: DispatchQueue
     private let room = DispatchSemaphore(value: 0)
     private var closed = false
+    /// Candidates wait here until the other side's description is set.
+    private let iceLock = NSLock()
+    private var hasRemote = false
+    private var heldIce: [FileSignal.Ice] = []
 
     var onCandidate: (FileSignal.Ice) -> Void = { _ in }
     var onOpen: () -> Void = {}
@@ -496,6 +505,7 @@ private final class PeerLink: NSObject, LKRTCPeerConnectionDelegate, LKRTCDataCh
         guard let connection else { return }
         connection.setRemoteDescription(LKRTCSessionDescription(type: .offer, sdp: offer)) { [weak self] error in
             guard let self, error == nil else { self?.onFailed(); return }
+            self.remoteIsSet()
             connection.answer(for: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { sdp, _ in
                 guard let sdp else { return self.onFailed() }
                 connection.setLocalDescription(sdp) { error in
@@ -507,12 +517,28 @@ private final class PeerLink: NSObject, LKRTCPeerConnectionDelegate, LKRTCDataCh
 
     func setAnswer(_ sdp: String) {
         connection?.setRemoteDescription(LKRTCSessionDescription(type: .answer, sdp: sdp)) { [weak self] error in
-            if error != nil { self?.onFailed() }
+            if error != nil { self?.onFailed() } else { self?.remoteIsSet() }
         }
     }
 
     func add(_ ice: FileSignal.Ice) {
+        iceLock.lock()
+        guard hasRemote else {
+            heldIce.append(ice)
+            iceLock.unlock()
+            return
+        }
+        iceLock.unlock()
         connection?.add(LKRTCIceCandidate(sdp: ice.candidate, sdpMLineIndex: ice.sdpMLineIndex, sdpMid: ice.sdpMid)) { _ in }
+    }
+
+    private func remoteIsSet() {
+        iceLock.lock()
+        hasRemote = true
+        let held = heldIce
+        heldIce = []
+        iceLock.unlock()
+        held.forEach(add)
     }
 
     func close() {
