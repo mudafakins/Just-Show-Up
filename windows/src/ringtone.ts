@@ -188,6 +188,11 @@ export function playClip(id: string) {
   void board.play().catch(() => {});
 }
 
+export function stopClip() {
+  board?.pause();
+  board = undefined;
+}
+
 const EMOJI: [string, string][] = [
   ["title theme", "🎬"], ["intro", "🎺"], ["hey hey", "👋"], ["laugh", "😂"],
   ["aaiye", "🙏"], ["dramatic", "😱"], ["yes", "🙌"], ["turr", "💨"],

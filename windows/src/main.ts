@@ -16,7 +16,7 @@ import {
   type Participant,
 } from "livekit-client";
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
-import { CLIPS, TONE_CHOICES, clipEmoji, playClip, previewRingtone, ringtone, startRingtone, stopPreview, stopRingtone, type Ringtone } from "./ringtone";
+import { CLIPS, TONE_CHOICES, clipEmoji, playClip, previewRingtone, stopClip, ringtone, startRingtone, stopPreview, stopRingtone, type Ringtone } from "./ringtone";
 import { playSound, sounds } from "./sounds";
 import { autoUpdate, checkForUpdate, installIfIdle, installUpdate, update, updateBusy } from "./updater";
 
@@ -526,8 +526,10 @@ function wireRoom(lk: Room) {
   lk.on(RoomEvent.DataReceived, (payload, p, _kind, topic) => {
     const from = participantID(p);
     if (topic === "soundboard" && from) {
+      const id = new TextDecoder().decode(payload.slice(0, 200));
+      if (id === "stop") return stopClip();
       // Each person can silence these with Settings → Sounds.
-      if (sounds.enabled()) playClip(new TextDecoder().decode(payload.slice(0, 200)));
+      if (sounds.enabled()) playClip(id);
       return;
     }
     if (topic !== "ink" || !from) return;
@@ -1148,7 +1150,8 @@ function soundboardMenu(anchor: HTMLElement) {
   const who = S.call ? `Everyone in Room ${S.call.number} hears it.` : "Only you hear it. Join a room to play it for others.";
   openMenu(
     anchor,
-    `<div class="label"><b>Soundboard</b><br />${who}</div>
+    `<div class="sb-head"><b>Soundboard</b><button data-action="sb-stop" title="${S.call ? "Stop the sound for everyone in the room" : "Stop the sound"}">■ Stop</button></div>
+     <div class="label">${who}</div>
      <div class="sb-grid">${CLIPS.map(
        (c) =>
          `<button data-action="sb" data-id="${esc(c.id)}" title="${esc(c.title)}"><span>${clipEmoji(c.title)}</span>${esc(c.title)}</button>`,
@@ -1228,7 +1231,7 @@ document.addEventListener("click", (event) => {
   const id = target.dataset.id;
   const n = Number(target.dataset.room);
   const teammate = id ? S.teammates.find((t) => t.id === id) : undefined;
-  if (inMenu && target.dataset.action !== "sb") closeMenu();
+  if (inMenu && target.dataset.action !== "sb" && target.dataset.action !== "sb-stop") closeMenu();
 
   switch (target.dataset.action) {
     case "gear":
@@ -1287,6 +1290,12 @@ document.addEventListener("click", (event) => {
       playClip(id!);
       if (room && S.call) {
         void room.localParticipant.publishData(new TextEncoder().encode(id!), { reliable: true, topic: "soundboard" });
+      }
+      return;
+    case "sb-stop":
+      stopClip();
+      if (room && S.call) {
+        void room.localParticipant.publishData(new TextEncoder().encode("stop"), { reliable: true, topic: "soundboard" });
       }
       return;
     case "ringtone-list":
