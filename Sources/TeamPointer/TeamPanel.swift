@@ -143,14 +143,6 @@ private struct ErrorText: View {
 private struct TeamList: View {
     @EnvironmentObject private var team: TeamStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var search = ""
-
-    private var visibleTeammates: [Teammate] {
-        let query = search.trimmed
-        guard !query.isEmpty else { return team.sortedTeammates }
-        return team.sortedTeammates.filter { $0.name.localizedCaseInsensitiveContains(query) }
-    }
-
     /// Me plus everyone online.
     private var onlineCount: Int { 1 + team.sortedTeammates.filter(\.isOnline).count }
 
@@ -162,10 +154,6 @@ private struct TeamList: View {
             } else {
             if team.isEditingName {
                 RenameBar()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
-            } else {
-                SearchField(text: $search)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 6)
             }
@@ -202,22 +190,12 @@ private struct TeamList: View {
             }
 
             VStack(spacing: 0) {
-                if search.trimmed.isEmpty, let me = team.me { MeRow(me: me) }
-                ForEach(visibleTeammates) { teammate in
+                if let me = team.me { MeRow(me: me) }
+                ForEach(team.sortedTeammates) { teammate in
                     TeammateRow(teammate: teammate)
                 }
-                if search.trimmed.isEmpty {
-                    TeamCodeRow()
-                        .padding(.top, 6)
-                }
-                if visibleTeammates.isEmpty && !search.trimmed.isEmpty {
-                    Text("No teammate matches “\(search.trimmed)”.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 10)
-                }
+                TeamCodeRow()
+                    .padding(.top, 6)
             }
             .padding(.horizontal, 6)
             .padding(.bottom, 8)
@@ -543,7 +521,7 @@ private struct RingtonePicker: View {
     }
 }
 
-/// Replaces the search field while changing your name.
+/// Shown under the header while changing your name.
 private struct RenameBar: View {
     @EnvironmentObject private var team: TeamStore
     @AppStorage("displayName") private var savedName = ""
@@ -594,34 +572,6 @@ private struct RenameBar: View {
                 team.isEditingName = false
             }
         }
-    }
-}
-
-private struct SearchField: View {
-    @Binding var text: String
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.tertiary)
-            TextField("Find teammates", text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .focused($isFocused)
-        }
-        .padding(.horizontal, 11)
-        .frame(height: 30)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.primary.opacity(isFocused ? 0.08 : 0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(isFocused ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
-        )
-        .animation(.easeOut(duration: 0.12), value: isFocused)
     }
 }
 
