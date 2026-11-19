@@ -100,7 +100,7 @@ private struct WelcomeView: View {
                 if isWorking { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(PressableStyle())
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -142,6 +142,7 @@ private struct ErrorText: View {
 
 private struct TeamList: View {
     @EnvironmentObject private var team: TeamStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var search = ""
 
     private var visibleTeammates: [Teammate] {
@@ -149,6 +150,9 @@ private struct TeamList: View {
         guard !query.isEmpty else { return team.sortedTeammates }
         return team.sortedTeammates.filter { $0.name.localizedCaseInsensitiveContains(query) }
     }
+
+    /// Me plus everyone online.
+    private var onlineCount: Int { 1 + team.sortedTeammates.filter(\.isOnline).count }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -168,16 +172,18 @@ private struct TeamList: View {
 
             if let ring = team.incomingRing {
                 RingBar(ring: ring)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.2)))
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.orange.opacity(0.18)))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
             }
 
+            SectionLabel(title: "Rooms")
             // The rooms: controls for the one I'm in, a join row for the others.
             ForEach(Rooms.numbers, id: \.self) { number in
                 if team.call?.number == number {
                     CallBar()
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.green.opacity(0.14)))
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.green.opacity(0.13)))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 1)
                 } else {
@@ -185,9 +191,7 @@ private struct TeamList: View {
                         .padding(.horizontal, 6)
                 }
             }
-            Divider()
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
+            SectionLabel(title: "Team", detail: "\(onlineCount) online")
             if let notice = team.notice {
                 Text(notice)
                     .font(.system(size: 11))
@@ -226,17 +230,25 @@ private struct TeamList: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if team.isShowingSoundboard && !team.isChoosingRingtone {
-                ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .topTrailing) {
+                if team.isShowingSoundboard && !team.isChoosingRingtone {
                     // Clicking anywhere else closes it.
                     Color.black.opacity(0.001)
                         .onTapGesture { team.isShowingSoundboard = false }
+                    // Grows out of the soundboard button, not from the middle.
                     SoundboardCard()
                         .padding(.top, 38)
                         .padding(.trailing, 8)
+                        .transition(
+                            reduceMotion
+                                ? .opacity
+                                : .scale(scale: 0.95, anchor: .topTrailing).combined(with: .opacity)
+                        )
                 }
             }
+            .animation(.easeOut(duration: 0.16), value: team.isShowingSoundboard)
         }
+        .animation(.easeOut(duration: 0.2), value: team.incomingRing != nil)
         .task { await team.reloadTeam() }
     }
 }
@@ -326,7 +338,7 @@ private struct Header: View {
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableStyle())
                 .help("Soundboard")
 
                 Button { team.doNotDisturb.toggle() } label: {
@@ -336,7 +348,7 @@ private struct Header: View {
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableStyle())
                 .help(team.doNotDisturb ? "Do Not Disturb is on. Click to turn it off." : "Do Not Disturb")
             }
         }
@@ -369,7 +381,7 @@ private struct SoundboardCard: View {
                     .background(Capsule().fill(Color.primary.opacity(0.1)))
                     .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableStyle())
                 .help(team.call == nil ? "Stop the sound" : "Stop the sound for everyone in the room")
             }
             Text(team.call.map { "Everyone in Room \($0.number) hears it." } ?? "Only you hear it. Join a room to play it for others.")
@@ -390,12 +402,12 @@ private struct SoundboardCard: View {
                             }
                             .frame(width: 64, height: 58)
                             .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.primary.opacity(hovered == clip.id ? 0.14 : 0.06))
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(Color.primary.opacity(hovered == clip.id ? 0.12 : 0.05))
                             )
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressableStyle())
                         .onHover { hovered = $0 ? clip.id : (hovered == clip.id ? nil : hovered) }
                         .help(clip.title)
                     }
@@ -439,7 +451,7 @@ private struct RingtonePicker: View {
                     .foregroundStyle(.secondary)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableStyle())
                 Spacer()
             }
             .overlay(Text("Ringtone").font(.system(size: 12, weight: .semibold)))
@@ -617,18 +629,19 @@ private struct TeamCodeRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: RowMetrics.spacing) {
             Image(systemName: copied ? "checkmark" : "person.badge.plus")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 40, height: 40)
-                .background(Circle().fill(Color.primary.opacity(0.1)))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: RowMetrics.lead, height: RowMetrics.lead)
+                .background(Circle().fill(Color.primary.opacity(0.08)))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(copied ? "Code Copied" : "Invite Teammates")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                 Text(team.teamCode.map { "Team code \($0)" } ?? "…")
-                    .font(.system(size: 12))
+                    .font(.system(size: 11.5).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -656,34 +669,29 @@ private struct RoomRow: View {
     private var inside: [Teammate] { team.teammates(in: number) }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: 11, weight: .medium))
+        HStack(spacing: RowMetrics.spacing) {
+            Image(systemName: inside.isEmpty ? "speaker.wave.2" : "speaker.wave.2.fill")
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(inside.isEmpty ? Color.secondary : Color.white)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(inside.isEmpty ? Color.primary.opacity(0.1) : Color.green))
+                .frame(width: RowMetrics.lead, height: RowMetrics.lead)
+                .background(Circle().fill(inside.isEmpty ? Color.primary.opacity(0.08) : Color.green))
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(Rooms.name(number))
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                 Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(inside.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.green))
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
 
             if isHovered || !inside.isEmpty {
                 JoinRoomButton(number: number)
+                    .transition(.opacity)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
-        )
-        .contentShape(Rectangle())
+        .rowStyle(isHovered: isHovered)
         .onHover { isHovered = $0 }
         .onTapGesture { team.joinRoom(number) }
         .help("Join \(Rooms.name(number))")
@@ -700,12 +708,13 @@ private extension View {
     func rowStyle(isHovered: Bool) -> some View {
         self
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isHovered ? Color.primary.opacity(0.07) : .clear)
             )
             .contentShape(Rectangle())
+            .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
 
@@ -721,20 +730,23 @@ private struct MeRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Avatar(teammate: me)
+        HStack(spacing: RowMetrics.spacing) {
+            Avatar(teammate: me, isSpeaking: false)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(me.name)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .lineLimit(1)
-                    Text("(You)")
-                        .font(.system(size: 13))
+                    Text("You")
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
                 }
                 Text(status)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(team.call != nil ? AnyShapeStyle(Color.green) : AnyShapeStyle(.secondary))
             }
             Spacer(minLength: 0)
         }
@@ -764,16 +776,17 @@ private struct TeammateRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Avatar(teammate: teammate)
+        HStack(spacing: RowMetrics.spacing) {
+            Avatar(teammate: teammate, isSpeaking: team.isInMyRoom(teammate) && team.speaking.contains(teammate.id))
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(teammate.name)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .lineLimit(1)
                 Text(statusText)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(statusIsActive ? AnyShapeStyle(Color.green) : AnyShapeStyle(.secondary))
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 0)
@@ -787,6 +800,7 @@ private struct TeammateRow: View {
             }
         }
         .rowStyle(isHovered: isHovered && (joinableRoom != nil || isSharing))
+        .animation(.easeOut(duration: 0.15), value: team.speaking.contains(teammate.id))
         .opacity(teammate.isOnline ? 1 : 0.5)
         .onHover { isHovered = $0 }
         .onTapGesture {
@@ -805,6 +819,8 @@ private struct TeammateRow: View {
     }
 
     private var isSharing: Bool { team.sharingTeammates.contains(teammate.id) }
+    /// In a room or sharing: shown in green, like the room rows.
+    private var statusIsActive: Bool { isSharing || theirRoom != nil }
     private var theirRoom: Int? { team.room(of: teammate) }
     /// The room they're in, when it isn't mine.
     private var joinableRoom: Int? {
@@ -877,7 +893,7 @@ private struct JoinRoomButton: View {
                 .padding(.vertical, 5)
                 .background(Capsule().fill(Color.green))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle())
         .help("Join \(Rooms.name(number))")
     }
 }
@@ -898,7 +914,7 @@ private struct RingButton: View {
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Color.red))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableStyle())
             .help("Stop calling \(teammate.name)")
         } else {
             Menu {
@@ -923,15 +939,18 @@ private struct RingButton: View {
 
 private struct Avatar: View {
     let teammate: Teammate
+    /// A green ring while they talk (only for people in my room).
+    var isSpeaking = false
+    private let size = RowMetrics.lead
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Circle()
                 .fill(teammate.color.gradient)
-                .frame(width: 40, height: 40)
+                .frame(width: size, height: size)
                 .overlay(
                     Text(teammate.initials)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(.white)
                 )
                 .overlay {
@@ -942,14 +961,22 @@ private struct Avatar: View {
                         } placeholder: {
                             Color.clear
                         }
-                        .frame(width: 40, height: 40)
+                        .frame(width: size, height: size)
                         .clipShape(Circle())
                     }
                 }
+                // A hairline edge, so light photos don't melt into the panel.
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.green, lineWidth: 2)
+                        .padding(-3)
+                        .opacity(isSpeaking ? 1 : 0)
+                )
             if teammate.isOnline {
                 Circle()
                     .fill(.green)
-                    .frame(width: 11, height: 11)
+                    .frame(width: 10, height: 10)
                     .overlay(Circle().stroke(.background, lineWidth: 2))
             }
         }
@@ -1068,6 +1095,48 @@ private struct ShareButton: View {
     }
 }
 
+/// Presses in slightly while held, so every button answers the click at once.
+private struct PressableStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// One size for the picture at the start of every row (avatar, room, invite), so
+/// all the names line up in one column.
+private enum RowMetrics {
+    static let lead: CGFloat = 36
+    static let spacing: CGFloat = 12
+}
+
+/// "ROOMS", "TEAM · 3 online": small labels that name each part of the panel.
+private struct SectionLabel: View {
+    let title: String
+    var detail: String?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+            if let detail {
+                Text("· \(detail)")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            Spacer()
+        }
+        .foregroundStyle(.tertiary)
+        .padding(.horizontal, 18)
+        .padding(.top, 8)
+        .padding(.bottom, 3)
+    }
+}
+
 private struct RoundButton: View {
     let symbol: String
     var tint: Color?
@@ -1080,9 +1149,10 @@ private struct RoundButton: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(tint == nil ? Color.primary : Color.white)
                 .frame(width: 28, height: 28)
-                .background(Circle().fill(tint ?? Color.primary.opacity(0.1)))
+                .background(Circle().fill(tint ?? Color.primary.opacity(0.08)))
+                .contentTransition(.symbolEffect(.replace))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableStyle())
         .help(help)
     }
 }
