@@ -54,12 +54,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var outsideClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FileSelfTest.runIfAsked()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         updateIcon()
 
-        let host = NSHostingController(rootView: TeamPanel().environmentObject(team).environmentObject(updater))
+        let host = NSHostingController(rootView: TeamPanel().environmentObject(team).environmentObject(updater).environmentObject(team.files))
         // Let the popover grow and shrink with the panel's content.
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host

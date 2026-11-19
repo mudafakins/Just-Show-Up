@@ -102,7 +102,10 @@ final class TeamStore: ObservableObject {
     private var presenceChannel: RealtimeChannelV2?
     private var presenceTask: Task<Void, Never>?
     private var signalTask: Task<Void, Never>?
+    private var fileTask: Task<Void, Never>?
     private let engine = CallEngine()
+    /// Files sent straight to and from teammates.
+    let files = FileTransfers()
 
     init() {
         guard let config = AppConfig.load() else {
@@ -112,6 +115,16 @@ final class TeamStore: ObservableObject {
         }
         let client = makeSupabaseClient(config)
         self.client = client
+
+        files.myID = { [weak self] in self?.me?.id }
+        files.myName = { [weak self] in self?.me?.name ?? "" }
+        files.isBusy = { [weak self] in self?.doNotDisturb ?? false }
+        files.onMessage = { [weak self] in self?.notice = $0 }
+        files.sendSignal = { [weak self] signal in
+            guard let channel = self?.presenceChannel else { return }
+            try? await channel.broadcast(event: "file", message: signal)
+        }
+        files.iceServers = { [weak self] in await self?.iceServers() ?? IceServer.defaults }
 
         engine.onSoundboard = { id in
             if id == "stop" { return Soundboard.stop() }
@@ -399,6 +412,16 @@ final class TeamStore: ObservableObject {
             }
         }
 
+        let fileSignals = channel.broadcastStream(event: "file")
+        fileTask = Task { [weak self] in
+            for await message in fileSignals {
+                guard let payload = message["payload"]?.objectValue,
+                      let signal = try? payload.decode(as: FileSignal.self)
+                else { continue }
+                self?.files.receive(signal)
+            }
+        }
+
         do {
             try await channel.subscribeWithError()
             try await channel.track(PresenceState(userID: userID.uuidString.lowercased(), room: nil))
@@ -412,6 +435,8 @@ final class TeamStore: ObservableObject {
         presenceTask = nil
         signalTask?.cancel()
         signalTask = nil
+        fileTask?.cancel()
+        fileTask = nil
         if let channel = presenceChannel {
             await channel.untrack()
             await client?.realtimeV2.removeChannel(channel)
@@ -680,6 +705,33 @@ final class TeamStore: ObservableObject {
     /// Reopens a teammate's shared screen if its window was closed.
     func showSharedScreen(of teammate: Teammate) {
         engine.showViewer(for: teammate.id)
+    }
+
+    // MARK: Files
+
+    /// Lets me pick files or a folder for a teammate, then offers them.
+    func chooseFiles(for teammate: Teammate) {
+        let panel = NSOpenPanel()
+        panel.title = "Send to \(teammate.name)"
+        panel.prompt = "Send"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        files.send(panel.urls, to: teammate)
+    }
+
+    /// STUN, plus a relay when the `ice-servers` function is set up (see supabase/).
+    private func iceServers() async -> [IceServer] {
+        struct Reply: Decodable { let iceServers: [IceServer] }
+        guard let client else { return IceServer.defaults }
+        do {
+            let reply: Reply = try await client.functions.invoke("ice-servers")
+            return reply.iceServers.isEmpty ? IceServer.defaults : reply.iceServers
+        } catch {
+            return IceServer.defaults
+        }
     }
 
     // MARK: Signals
