@@ -5,7 +5,6 @@
 // share one team.
 import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
 import { invoke } from "@tauri-apps/api/core";
-import { accept as acceptFile, cancel as cancelFile, decline as declineFile, files, receiveSignal as receiveFileSignal, sendFiles, type FileSignal, type Transfer } from "./files";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import {
   LocalTrackPublication,
@@ -261,7 +260,6 @@ async function joinPresence() {
   });
 
   ch.on("broadcast", { event: "call" }, ({ payload }) => void receive(payload as CallSignal));
-  ch.on("broadcast", { event: "file" }, ({ payload }) => receiveFileSignal(payload as FileSignal));
 
   ch.subscribe((status) => {
     if (status === "SUBSCRIBED") void updatePresence();
@@ -1071,35 +1069,6 @@ function meRow(me: Teammate) {
   </div>`;
 }
 
-const formatBytes = (n: number) => {
-  const units = ["bytes", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  while (n >= 1000 && i < units.length - 1) {
-    n /= 1000;
-    i++;
-  }
-  return `${i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)} ${units[i]}`;
-};
-
-/** "Sending design.fig · 45% · 12 MB/s", with a thin progress bar. */
-function transferStatus(t: Transfer) {
-  const first = firstName(t.teammateName);
-  let text: string;
-  if (t.stage === "waiting") text = t.direction === "sending" ? `Waiting for ${first} to accept ${t.fileName}…` : `Offering ${t.fileName}…`;
-  else if (t.stage === "connecting") text = `Connecting to ${first}…`;
-  else if (t.stage === "checking") text = `Checking ${t.fileName}…`;
-  else {
-    const pct = t.size ? Math.min(100, Math.floor((t.sent / t.size) * 100)) : 0;
-    text = `${t.direction === "sending" ? "Sending" : "Receiving"} ${t.fileName} · ${pct}%`;
-    if (t.speed > 0) text += ` · ${formatBytes(t.speed)}/s`;
-  }
-  const bar =
-    t.stage === "transferring" || t.stage === "checking"
-      ? `<div class="xfer-bar"><span style="width:${t.size ? Math.min(100, (t.sent / t.size) * 100) : 0}%"></span></div>`
-      : "";
-  return `<div class="sub xfer">${esc(text)}</div>${bar}`;
-}
-
 function teammateRow(t: Teammate) {
   const online = isOnline(t);
   const theirRoom = roomOf(t);
@@ -1113,17 +1082,9 @@ function teammateRow(t: Teammate) {
   if (callingTo !== undefined) status = `Calling to ${roomName(callingTo)}…`;
   if (sharing) status = "Sharing their screen · click to view";
 
-  const transfer = files.transferWith(t.id);
   let buttons = "";
-  if (transfer) {
-    buttons += `<button class="round" data-action="file-cancel" data-id="${transfer.id}" title="${
-      transfer.direction === "sending" ? "Stop sending" : "Stop receiving"
-    }">✕</button>`;
-  } else if (online) {
-    buttons += `<button class="round" data-action="send-menu" data-id="${t.id}" title="Send files to ${esc(t.name)}">📎</button>`;
-  }
   if (joinable !== undefined) buttons += `<button class="join" data-action="join" data-room="${joinable}">Join</button>`;
-  if (online && !isInMyRoom(t) && !transfer) {
+  if (online && !isInMyRoom(t)) {
     buttons +=
       callingTo !== undefined
         ? `<button class="round red" data-action="stop-calling" data-id="${t.id}" title="Stop calling ${esc(t.name)}">✕</button>`
@@ -1134,9 +1095,7 @@ function teammateRow(t: Teammate) {
     sharing ? "view" : joinable !== undefined ? "join" : ""
   }" data-id="${t.id}" ${joinable !== undefined ? `data-room="${joinable}"` : ""}>
     ${avatar(t, isInMyRoom(t) && S.speaking.has(t.id))}
-    <div class="text"><div class="title">${esc(t.name)}</div>${
-      transfer ? transferStatus(transfer) : `<div class="sub${sharing || theirRoom !== undefined ? " active" : ""}">${esc(status)}</div>`
-    }</div>
+    <div class="text"><div class="title">${esc(t.name)}</div><div class="sub${sharing || theirRoom !== undefined ? " active" : ""}">${esc(status)}</div></div>
     ${buttons}
   </div>`;
 }
@@ -1156,21 +1115,6 @@ function renderTeam() {
         <div class="sub">is calling you to ${roomName(S.incoming.roomNumber)}</div></div>
       <button class="round red" data-action="decline" title="Decline">✕</button>
       <button class="round green" data-action="accept" title="Accept">📞</button>
-    </div>`;
-  }
-  for (const offer of files.incoming()) {
-    html += `<div class="bar file">
-      <div class="text"><div class="title">📄 ${esc(offer.fileName)}</div>
-        <div class="sub">${esc(offer.teammateName)} wants to send you this · ${formatBytes(offer.size)}</div></div>
-      <button class="link" data-action="file-decline" data-id="${offer.id}">Decline</button>
-      <button class="btn primary" data-action="file-accept" data-id="${offer.id}" title="Save to Downloads → Just Show Up">Save</button>
-    </div>`;
-  }
-  if (files.lastSaved) {
-    html += `<div class="bar saved">
-      <div class="text"><div class="title">✓ ${esc(files.lastSaved.split(/[\\/]/).pop() ?? "")}</div></div>
-      <button class="link" data-action="file-reveal">Show in folder</button>
-      <button class="link" data-action="file-dismiss" title="Dismiss">✕</button>
     </div>`;
   }
   html += `<div class="section">Rooms</div>`;
@@ -1278,19 +1222,6 @@ function gearMenu(anchor: HTMLElement) {
   );
 }
 
-function sendMenu(anchor: HTMLElement, t: Teammate) {
-  openMenu(
-    anchor,
-    `<button data-action="send-files" data-id="${t.id}">Send Files…</button>
-     <button data-action="send-folder" data-id="${t.id}">Send a Folder…</button>`,
-  );
-}
-
-async function pickAndSend(t: Teammate, folder: boolean) {
-  const paths = await invoke<string[]>("pick_files", { folder });
-  if (paths.length) await sendFiles(paths, t);
-}
-
 function bellMenu(anchor: HTMLElement, t: Teammate) {
   openMenu(
     anchor,
@@ -1306,7 +1237,7 @@ function bellMenu(anchor: HTMLElement, t: Teammate) {
 document.addEventListener("click", (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
   const inMenu = !!(event.target as HTMLElement).closest(".menu");
-  if (!inMenu && !["gear", "bell", "soundboard", "send-menu"].includes(target?.dataset.action ?? "")) closeMenu();
+  if (!inMenu && !["gear", "bell", "soundboard"].includes(target?.dataset.action ?? "")) closeMenu();
   if (!target || !target.dataset.action) return;
   event.stopPropagation();
   const id = target.dataset.id;
@@ -1319,25 +1250,6 @@ document.addEventListener("click", (event) => {
       return menuEl ? closeMenu() : gearMenu(target);
     case "bell":
       return teammate && bellMenu(target, teammate);
-    case "send-menu":
-      return teammate && sendMenu(target, teammate);
-    case "send-files":
-      return teammate && void pickAndSend(teammate, false);
-    case "send-folder":
-      return teammate && void pickAndSend(teammate, true);
-    case "file-accept":
-      return id && acceptFile(id);
-    case "file-decline":
-      return id && declineFile(id);
-    case "file-cancel":
-      return id && cancelFile(id);
-    case "file-reveal":
-      if (files.lastSaved) void invoke("reveal", { path: files.lastSaved });
-      files.lastSaved = undefined;
-      return render();
-    case "file-dismiss":
-      files.lastSaved = undefined;
-      return render();
     case "call":
       return teammate && ring(teammate, n);
     case "stop-calling":
@@ -1458,38 +1370,6 @@ void listen("panel-shown", () => {
 // teammates' drawings (so they never reached my overlay while I shared my screen)
 // and soundboard clips. Voice kept working, which hid the problem. A page that holds
 // a Web Lock is never frozen, so hold one for as long as the app runs.
-// Sending files straight to teammates (see files.ts).
-files.myID = () => S.me?.id;
-files.myName = () => S.me?.name ?? "";
-files.isBusy = () => S.doNotDisturb;
-files.onMessage = (text) => {
-  S.notice = text;
-  render();
-};
-let fileRenderQueued = false;
-files.onChange = () => {
-  // Progress updates come fast; redraw at most once a frame.
-  if (fileRenderQueued) return;
-  fileRenderQueued = true;
-  requestAnimationFrame(() => {
-    fileRenderQueued = false;
-    render();
-  });
-};
-files.sendSignal = async (signal) => {
-  await channel?.send({ type: "broadcast", event: "file", payload: signal });
-};
-files.iceServers = async () => {
-  // A relay, when the ice-servers function is set up; otherwise the public STUN servers.
-  try {
-    const { data } = await sb!.functions.invoke("ice-servers");
-    if (data?.iceServers?.length) return data.iceServers as RTCIceServer[];
-  } catch {
-    /* not set up */
-  }
-  return [{ urls: ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"] }];
-};
-
 void navigator.locks?.request("just-show-up-stay-awake", () => new Promise<never>(() => {}));
 
 void start();

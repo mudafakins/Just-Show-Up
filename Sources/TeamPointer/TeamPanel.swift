@@ -142,7 +142,6 @@ private struct ErrorText: View {
 
 private struct TeamList: View {
     @EnvironmentObject private var team: TeamStore
-    @EnvironmentObject private var files: FileTransfers
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Me plus everyone online.
     private var onlineCount: Int { 1 + team.sortedTeammates.filter(\.isOnline).count }
@@ -163,19 +162,6 @@ private struct TeamList: View {
                 RingBar(ring: ring)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.orange.opacity(0.18)))
                     .transition(.opacity.combined(with: .move(edge: .top)))
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-            }
-
-            ForEach(files.incoming) { offer in
-                IncomingFileBar(offer: offer)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.accentColor.opacity(0.14)))
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-            }
-            if let saved = files.lastSaved {
-                SavedFileBar(url: saved)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
             }
@@ -242,7 +228,6 @@ private struct TeamList: View {
             .animation(.easeOut(duration: 0.16), value: team.isShowingSoundboard)
         }
         .animation(.easeOut(duration: 0.2), value: team.incomingRing != nil)
-        .animation(.easeOut(duration: 0.2), value: files.incoming.map(\.id))
         .task { await team.reloadTeam() }
     }
 }
@@ -801,12 +786,8 @@ private struct MeRow: View {
 
 private struct TeammateRow: View {
     @EnvironmentObject private var team: TeamStore
-    @EnvironmentObject private var files: FileTransfers
     let teammate: Teammate
     @State private var isHovered = false
-    @State private var isDropTarget = false
-
-    private var transfer: FileTransfer? { files.transfer(with: teammate.id) }
 
     var body: some View {
         HStack(spacing: RowMetrics.spacing) {
@@ -816,24 +797,15 @@ private struct TeammateRow: View {
                 Text(teammate.name)
                     .font(.system(size: 14, weight: .medium))
                     .lineLimit(1)
-                if let transfer {
-                    TransferStatus(transfer: transfer)
-                } else {
-                    Text(isDropTarget ? "Drop to send to \(teammate.name)" : statusText)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(statusIsActive || isDropTarget ? AnyShapeStyle(Color.green) : AnyShapeStyle(.secondary))
-                        .lineLimit(1)
-                }
+                Text(statusText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(statusIsActive ? AnyShapeStyle(Color.green) : AnyShapeStyle(.secondary))
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 0)
 
-            if let transfer {
-                RoundButton(symbol: "xmark", tint: nil,
-                            help: transfer.direction == .sending ? "Stop sending" : "Stop receiving") {
-                    files.cancel(transfer.id)
-                }
-            } else if let theirs = joinableRoom {
+            if let theirs = joinableRoom {
                 // They're in a room I'm not in: one click takes me there.
                 JoinRoomButton(number: theirs)
             }
@@ -841,19 +813,7 @@ private struct TeammateRow: View {
                 RingButton(teammate: teammate)
             }
         }
-        .rowStyle(isHovered: isDropTarget || isHovered && (joinableRoom != nil || isSharing))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.green, lineWidth: isDropTarget ? 2 : 0)
-                .padding(.horizontal, 1)
-        )
-        // Drop files (or a folder) on a teammate to send them.
-        .dropDestination(for: URL.self) { urls, _ in
-            let fileURLs = urls.filter(\.isFileURL)
-            guard teammate.isOnline, !fileURLs.isEmpty else { return false }
-            files.send(fileURLs, to: teammate)
-            return true
-        } isTargeted: { isDropTarget = $0 && teammate.isOnline }
+        .rowStyle(isHovered: isHovered && (joinableRoom != nil || isSharing))
         .animation(.easeOut(duration: 0.15), value: team.speaking.contains(teammate.id))
         .opacity(teammate.isOnline ? 1 : 0.5)
         .onHover { isHovered = $0 }
@@ -866,10 +826,6 @@ private struct TeammateRow: View {
         }
         .help(helpText)
         .contextMenu {
-            if teammate.isOnline {
-                Button("Send Files…") { team.chooseFiles(for: teammate) }
-                Divider()
-            }
             Button("Remove \(teammate.name) from Team") {
                 Task { await team.remove(teammate) }
             }
@@ -903,122 +859,6 @@ private struct TeammateRow: View {
         }
         if let theirRoom { return "In \(Rooms.name(theirRoom))" }
         return teammate.isOnline ? "Online" : "Offline"
-    }
-}
-
-/// "Sending design.fig · 45% · 12 MB/s", with a thin progress bar.
-private struct TransferStatus: View {
-    let transfer: FileTransfer
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(text)
-                .font(.system(size: 11.5).monospacedDigit())
-                .foregroundStyle(Color.accentColor)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if transfer.stage == .transferring || transfer.stage == .checking {
-                ProgressView(value: transfer.fraction)
-                    .progressViewStyle(.linear)
-                    .controlSize(.mini)
-                    .tint(.accentColor)
-            }
-        }
-    }
-
-    private var text: String {
-        let name = transfer.fileName
-        let first = transfer.teammateName.components(separatedBy: " ")[0]
-        switch transfer.stage {
-        case .waiting:
-            return transfer.direction == .sending ? "Waiting for \(first) to accept \(name)…" : "Offering \(name)…"
-        case .connecting:
-            return "Connecting to \(first)…"
-        case .checking:
-            return "Checking \(name)…"
-        case .transferring:
-            let verb = transfer.direction == .sending ? "Sending" : "Receiving"
-            var parts = ["\(verb) \(name)", "\(Int(transfer.fraction * 100))%"]
-            if transfer.speed > 0 {
-                parts.append(ByteCountFormatter.string(fromByteCount: Int64(transfer.speed), countStyle: .file) + "/s")
-            }
-            return parts.joined(separator: " · ")
-        }
-    }
-}
-
-/// A teammate wants to send me a file: Save or Decline.
-private struct IncomingFileBar: View {
-    @EnvironmentObject private var files: FileTransfers
-    let offer: FileTransfer
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "doc.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(offer.fileName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text("\(offer.teammateName) wants to send you this · \(ByteCountFormatter.string(fromByteCount: offer.size, countStyle: .file))")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Button("Decline") { files.decline(offer.id) }
-                .buttonStyle(PressableStyle())
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            Button { files.accept(offer.id) } label: {
-                Text("Save")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.accentColor))
-            }
-            .buttonStyle(PressableStyle())
-            .help("Save to Downloads → Just Show Up")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-}
-
-/// The file I just received, one click from Finder.
-private struct SavedFileBar: View {
-    @EnvironmentObject private var files: FileTransfers
-    let url: URL
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            Text(url.lastPathComponent)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 0)
-            Button("Show in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-                files.lastSaved = nil
-            }
-            .buttonStyle(PressableStyle())
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Color.accentColor)
-            Button { files.lastSaved = nil } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
-            }
-            .buttonStyle(PressableStyle())
-            .help("Dismiss")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.green.opacity(0.1)))
     }
 }
 
@@ -1096,8 +936,6 @@ private struct RingButton: View {
                     Button("Call to \(Rooms.name(number))") { team.ring(teammate, to: number) }
                         .disabled(team.room(of: teammate) == number)
                 }
-                Divider()
-                Button("Send Files…") { team.chooseFiles(for: teammate) }
             } label: {
                 Image(systemName: "bell.fill")
                     .font(.system(size: 12, weight: .semibold))
