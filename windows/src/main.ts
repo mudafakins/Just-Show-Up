@@ -637,6 +637,9 @@ function sendPeopleToOverlay() {
 async function startSharing() {
   if (!room || !S.me) return;
   S.error = undefined;
+  // The screen picker takes focus from the panel. Without this the panel hides as it
+  // loses focus, which cancels the picker, so sharing "sometimes" did nothing.
+  await invoke("set_picking", { on: true });
   try {
     await room.localParticipant.setScreenShareEnabled(
       true,
@@ -658,6 +661,8 @@ async function startSharing() {
     // Cancelling the picker isn't an error worth showing.
     if (!/denied|cancel|abort/i.test(errorText(e))) S.error = `Couldn't share the screen: ${errorText(e)}`;
     return render();
+  } finally {
+    void invoke("set_picking", { on: false });
   }
   const track = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
   if (!track) return;
