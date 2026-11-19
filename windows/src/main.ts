@@ -1360,6 +1360,13 @@ void listen("panel-shown", () => {
   if (S.phase === "team") void reloadTeam();
 });
 
+// The panel is a hidden page most of the time. WebView2 freezes hidden pages after a
+// few minutes, which pauses everything that arrives over the room's data channel:
+// teammates' drawings (so they never reached my overlay while I shared my screen)
+// and soundboard clips. Voice kept working, which hid the problem. A page that holds
+// a Web Lock is never frozen, so hold one for as long as the app runs.
+void navigator.locks?.request("just-show-up-stay-awake", () => new Promise<never>(() => {}));
+
 void start();
 
 // Updates: check now and every few hours; a dot on the gear when one is ready.
