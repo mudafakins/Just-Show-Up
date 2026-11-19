@@ -16,7 +16,7 @@ import {
   type Participant,
 } from "livekit-client";
 import { InkBoard, InkView, keepInk, norm, type InkMessage } from "./ink";
-import { CLIPS, TONE_CHOICES, previewRingtone, ringtone, startRingtone, stopPreview, stopRingtone, type Ringtone } from "./ringtone";
+import { CLIPS, TONE_CHOICES, clipEmoji, playClip, previewRingtone, ringtone, startRingtone, stopPreview, stopRingtone, type Ringtone } from "./ringtone";
 import { playSound, sounds } from "./sounds";
 import { autoUpdate, checkForUpdate, installIfIdle, installUpdate, update, updateBusy } from "./updater";
 
@@ -525,6 +525,11 @@ function wireRoom(lk: Room) {
   });
   lk.on(RoomEvent.DataReceived, (payload, p, _kind, topic) => {
     const from = participantID(p);
+    if (topic === "soundboard" && from) {
+      // Each person can silence these with Settings → Sounds.
+      if (sounds.enabled()) playClip(new TextDecoder().decode(payload.slice(0, 200)));
+      return;
+    }
     if (topic !== "ink" || !from) return;
     try {
       const message = JSON.parse(new TextDecoder().decode(payload)) as InkMessage;
@@ -810,6 +815,7 @@ function render() {
   if (S.phase === "team") renderTeam();
   if (S.phase === "welcome") renderWelcome();
   panelEl.querySelector(".gear")?.classList.toggle("has-update", !!update.available);
+  panelEl.querySelector(".sboard")?.classList.toggle("on", !!menuEl?.classList.contains("soundboard"));
   const dnd = panelEl.querySelector<HTMLElement>(".dnd");
   if (dnd) {
     dnd.classList.toggle("on", S.doNotDisturb);
@@ -859,7 +865,7 @@ function buildSkeleton() {
     });
   } else {
     panelEl.innerHTML = `
-      <div class="header">Just Show Up!<button class="gear" data-action="gear" title="Settings">⚙︎</button><button class="dnd" data-action="dnd" title="Do Not Disturb"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button></div>
+      <div class="header">Just Show Up!<button class="gear" data-action="gear" title="Settings">⚙︎</button><button class="sboard" data-action="soundboard" title="Soundboard"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M9 18V6l10-2v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.5" fill="currentColor"/><circle cx="16.5" cy="16" r="2.5" fill="currentColor"/></svg></button><button class="dnd" data-action="dnd" title="Do Not Disturb"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button></div>
       <div class="pad" id="search-wrap"><input id="search" placeholder="Find Teammates" /></div>
       <div class="pad inline" id="name-wrap" hidden>
         <input id="name-input" placeholder="Your name" />
@@ -1137,6 +1143,20 @@ function openMenu(anchor: HTMLElement, items: string) {
   if (needed > window.innerHeight) void invoke("set_panel_height", { height: needed });
 }
 
+/** The soundboard grid: click a sound to play it (for the whole room when in one). */
+function soundboardMenu(anchor: HTMLElement) {
+  const who = S.call ? `Everyone in Room ${S.call.number} hears it.` : "Only you hear it. Join a room to play it for others.";
+  openMenu(
+    anchor,
+    `<div class="label"><b>Soundboard</b><br />${who}</div>
+     <div class="sb-grid">${CLIPS.map(
+       (c) =>
+         `<button data-action="sb" data-id="${esc(c.id)}" title="${esc(c.title)}"><span>${clipEmoji(c.title)}</span>${esc(c.title)}</button>`,
+     ).join("")}</div>`,
+  );
+  menuEl!.classList.add("soundboard");
+}
+
 /** Settings → Ringtone: every sound, with a preview when you point at one. */
 function ringtoneMenu(scrollTop = 0) {
   const gear = panelEl.querySelector<HTMLElement>(".gear");
@@ -1202,13 +1222,13 @@ function bellMenu(anchor: HTMLElement, t: Teammate) {
 document.addEventListener("click", (event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
   const inMenu = !!(event.target as HTMLElement).closest(".menu");
-  if (!inMenu && target?.dataset.action !== "gear" && target?.dataset.action !== "bell") closeMenu();
+  if (!inMenu && !["gear", "bell", "soundboard"].includes(target?.dataset.action ?? "")) closeMenu();
   if (!target || !target.dataset.action) return;
   event.stopPropagation();
   const id = target.dataset.id;
   const n = Number(target.dataset.room);
   const teammate = id ? S.teammates.find((t) => t.id === id) : undefined;
-  if (inMenu) closeMenu();
+  if (inMenu && target.dataset.action !== "sb") closeMenu();
 
   switch (target.dataset.action) {
     case "gear":
@@ -1261,6 +1281,14 @@ document.addEventListener("click", (event) => {
       S.doNotDisturb = !S.doNotDisturb;
       localStorage.setItem("dnd", S.doNotDisturb ? "1" : "0");
       return render();
+    case "soundboard":
+      return menuEl?.classList.contains("soundboard") ? closeMenu() : soundboardMenu(target);
+    case "sb":
+      playClip(id!);
+      if (room && S.call) {
+        void room.localParticipant.publishData(new TextEncoder().encode(id!), { reliable: true, topic: "soundboard" });
+      }
+      return;
     case "ringtone-list":
       return ringtoneMenu();
     case "ringtone": {

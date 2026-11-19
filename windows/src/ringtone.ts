@@ -171,3 +171,28 @@ export function stopPreview() {
   void previewContext?.close();
   previewContext = undefined;
 }
+
+// ---------------------------------------------------------------- soundboard
+
+let board: HTMLAudioElement | undefined;
+let boardStarted = 0;
+
+/** Plays a soundboard clip once; one at a time, so rapid clicks don't pile up. */
+export function playClip(id: string) {
+  const clip = CLIPS.find((c) => c.id === id);
+  if (!clip?.url || Date.now() - boardStarted < 250) return;
+  boardStarted = Date.now();
+  board?.pause();
+  board = new Audio(clip.url);
+  board.volume = 0.8;
+  void board.play().catch(() => {});
+}
+
+const EMOJI: [string, string][] = [
+  ["title theme", "🎬"], ["intro", "🎺"], ["hey hey", "👋"], ["laugh", "😂"],
+  ["aaiye", "🙏"], ["dramatic", "😱"], ["yes", "🙌"], ["turr", "💨"],
+  ["flute", "🎶"], ["nahi", "🙅"], ["uhh", "😩"], ["haaa", "😮"],
+  ["tabla", "🥁"], ["uii", "😵"], ["soap", "📺"], ["funny", "🤪"], ["locha", "🤯"],
+];
+/** A picture for each clip's tile, from its name ("Hey Hey 3" → 👋). Same as the Mac. */
+export const clipEmoji = (title: string) => EMOJI.find(([k]) => title.toLowerCase().includes(k))?.[1] ?? "🔊";

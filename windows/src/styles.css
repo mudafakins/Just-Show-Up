@@ -35,6 +35,12 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .gear:hover { background: var(--hover); }
 .dnd { position: absolute; right: 12px; top: 9px; width: 26px; height: 26px; border-radius: 13px; color: var(--muted); display: flex; align-items: center; justify-content: center; }
 .dnd:hover { background: var(--hover); }
+.sboard { position: absolute; right: 40px; top: 9px; width: 26px; height: 26px; border-radius: 13px; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.sboard:hover { background: var(--hover); }
+.menu.soundboard { width: 296px; }
+.menu .sb-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; max-height: 260px; overflow-y: auto; padding: 2px; }
+.menu .sb-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 58px; padding: 4px; text-align: center; font-size: 10px; line-height: 1.15; background: var(--hover); border-radius: 8px; overflow: hidden; }
+.menu .sb-grid button span { font-size: 22px; line-height: 1; }
 .dnd.on { color: #af52de; }
 .dnd.on path { fill: currentColor; }
 .gear.has-update::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 4px; background: #ff3b30; }
