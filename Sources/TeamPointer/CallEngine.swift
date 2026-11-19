@@ -35,6 +35,8 @@ final class CallEngine {
     var onDrawModeExited: (() -> Void)?
     /// Who is audibly speaking right now (not counting me).
     var onSpeakersChanged: ((Set<UUID>) -> Void)?
+    /// A teammate in the room played a soundboard clip (its ringtone id).
+    var onSoundboard: ((String) -> Void)?
 
     private var room: Room?
     private var relay: Relay?
@@ -134,6 +136,16 @@ final class CallEngine {
         Task {
             try? await room.localParticipant.publish(
                 data: data, options: DataPublishOptions(topic: "ink", reliable: reliable)
+            )
+        }
+    }
+
+    /// Asks everyone else in the room to play a soundboard clip.
+    func sendSoundboard(_ id: String) {
+        guard let room else { return }
+        Task {
+            try? await room.localParticipant.publish(
+                data: Data(id.utf8), options: DataPublishOptions(topic: "soundboard", reliable: true)
             )
         }
     }
@@ -351,6 +363,11 @@ private final class Relay: RoomDelegate, @unchecked Sendable {
     }
 
     func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String, encryptionType: EncryptionType) {
+        if topic == "soundboard", participant != nil {
+            let id = String(decoding: data.prefix(200), as: UTF8.self)
+            Task { @MainActor [engine] in engine?.onSoundboard?(id) }
+            return
+        }
         guard topic == "ink", let user = participant?.identity.flatMap({ UUID(uuidString: $0.stringValue) }) else { return }
         Task { @MainActor [engine] in engine?.receiveInk(data, from: user) }
     }

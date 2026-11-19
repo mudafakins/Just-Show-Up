@@ -225,6 +225,18 @@ private struct TeamList: View {
             }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if team.isShowingSoundboard && !team.isChoosingRingtone {
+                ZStack(alignment: .topTrailing) {
+                    // Clicking anywhere else closes it.
+                    Color.black.opacity(0.001)
+                        .onTapGesture { team.isShowingSoundboard = false }
+                    SoundboardCard()
+                        .padding(.top, 38)
+                        .padding(.trailing, 8)
+                }
+            }
+        }
         .task { await team.reloadTeam() }
     }
 }
@@ -261,7 +273,10 @@ private struct Header: View {
                     }
                     Toggle("Keep Drawings Until Cleared", isOn: $keepInk)
                     Toggle("Sounds", isOn: $playSounds)
-                    Button("Ringtone: \(ringtoneTitle)…") { team.isChoosingRingtone = true }
+                    Button("Ringtone: \(ringtoneTitle)…") {
+                        team.isShowingSoundboard = false
+                        team.isChoosingRingtone = true
+                    }
                     Divider()
                     Button("Copy Team Code") { team.copyTeamCode() }
                     Button("New Team Code") { Task { await team.regenerateCode() } }
@@ -304,6 +319,16 @@ private struct Header: View {
 
                 Spacer()
 
+                Button { team.isShowingSoundboard.toggle() } label: {
+                    Image(systemName: "music.quarternote.3")
+                        .font(.system(size: 13))
+                        .foregroundStyle(team.isShowingSoundboard ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Soundboard")
+
                 Button { team.doNotDisturb.toggle() } label: {
                     Image(systemName: team.doNotDisturb ? "moon.fill" : "moon")
                         .font(.system(size: 14))
@@ -318,6 +343,60 @@ private struct Header: View {
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 10)
+    }
+}
+
+/// The soundboard grid: click a sound to play it (for the whole room when in one).
+private struct SoundboardCard: View {
+    @EnvironmentObject private var team: TeamStore
+    @State private var hovered: String?
+
+    private let columns = Array(repeating: GridItem(.fixed(64), spacing: 4), count: 4)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Soundboard")
+                .font(.system(size: 12, weight: .semibold))
+            Text(team.call.map { "Everyone in Room \($0.number) hears it." } ?? "Only you hear it. Join a room to play it for others.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 4) {
+                    ForEach(Soundboard.clips) { clip in
+                        Button { team.playSoundboard(clip.id) } label: {
+                            VStack(spacing: 2) {
+                                Text(Soundboard.emoji(for: clip.title))
+                                    .font(.system(size: 22))
+                                Text(clip.title)
+                                    .font(.system(size: 9))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(.primary)
+                            }
+                            .frame(width: 64, height: 58)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.primary.opacity(hovered == clip.id ? 0.14 : 0.06))
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovered = $0 ? clip.id : (hovered == clip.id ? nil : hovered) }
+                        .help(clip.title)
+                    }
+                }
+            }
+            .frame(height: 252)
+        }
+        .padding(10)
+        .frame(width: 292)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
+        .onExitCommand { team.isShowingSoundboard = false }
     }
 }
 

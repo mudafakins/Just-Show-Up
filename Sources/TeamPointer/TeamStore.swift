@@ -68,6 +68,8 @@ final class TeamStore: ObservableObject {
     @Published var isEditingName = false
     /// The ringtone list is showing in place of the rooms and teammates.
     @Published var isChoosingRingtone = false
+    /// The soundboard grid is open.
+    @Published var isShowingSoundboard = false
 
     // Rooms
     /// Set while I'm in a room.
@@ -111,6 +113,10 @@ final class TeamStore: ObservableObject {
         let client = makeSupabaseClient(config)
         self.client = client
 
+        engine.onSoundboard = { id in
+            // Each person can silence these with Settings → Sounds.
+            if Sounds.isEnabled { Soundboard.play(id) }
+        }
         engine.onParticipantsChanged = { [weak self] ids in
             guard let self, let call = self.call else { return }
             // Chime when someone joins or leaves my room (not for the people
@@ -596,6 +602,12 @@ final class TeamStore: ObservableObject {
     private func stopIncomingRing() {
         incomingRing = nil
         Ringtone.stop()
+    }
+
+    /// Plays a soundboard clip here and, when I'm in a room, for everyone in it.
+    func playSoundboard(_ id: String) {
+        Soundboard.play(id)
+        if call != nil { engine.sendSoundboard(id) }
     }
 
     func toggleMute() {

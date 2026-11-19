@@ -191,3 +191,37 @@ enum Ringtone {
         }
     }
 }
+
+/// The soundboard: the ringtone clips, played once on a click (one at a time, so
+/// rapid clicks don't pile up into noise).
+@MainActor
+enum Soundboard {
+    private static var sound: NSSound?
+    private static var lastStart = Date.distantPast
+
+    static var clips: [Ringtone.Choice] { Ringtone.clips }
+
+    static func play(_ id: String) {
+        guard Date().timeIntervalSince(lastStart) > 0.25,
+              let choice = Ringtone.clips.first(where: { $0.id == id }),
+              case .clip(let url) = choice.source,
+              let next = NSSound(contentsOf: url, byReference: true) else { return }
+        lastStart = Date()
+        sound?.stop()
+        next.volume = 0.8
+        next.play()
+        sound = next
+    }
+
+    /// A picture for each clip's tile, from its name ("Hey Hey 3" → 👋).
+    static func emoji(for title: String) -> String {
+        let name = title.lowercased()
+        let table: [(String, String)] = [
+            ("title theme", "🎬"), ("intro", "🎺"), ("hey hey", "👋"), ("laugh", "😂"),
+            ("aaiye", "🙏"), ("dramatic", "😱"), ("yes", "🙌"), ("turr", "💨"),
+            ("flute", "🎶"), ("nahi", "🙅"), ("uhh", "😩"), ("haaa", "😮"),
+            ("tabla", "🥁"), ("uii", "😵"), ("soap", "📺"), ("funny", "🤪"), ("locha", "🤯"),
+        ]
+        return table.first { name.contains($0.0) }?.1 ?? "🔊"
+    }
+}
