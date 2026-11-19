@@ -868,19 +868,12 @@ function buildSkeleton() {
   } else {
     panelEl.innerHTML = `
       <div class="header">Just Show Up!<button class="gear" data-action="gear" title="Settings">⚙︎</button><button class="sboard" data-action="soundboard" title="Soundboard"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M9 18V6l10-2v12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="6.5" cy="18" r="2.5" fill="currentColor"/><circle cx="16.5" cy="16" r="2.5" fill="currentColor"/></svg></button><button class="dnd" data-action="dnd" title="Do Not Disturb"><svg viewBox="0 0 24 24" width="15" height="15"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button></div>
-      <div class="pad" id="search-wrap"><input id="search" placeholder="Find Teammates" /></div>
       <div class="pad inline" id="name-wrap" hidden>
         <input id="name-input" placeholder="Your name" />
         <button class="btn primary" data-action="save-name">Save</button>
         <button class="link" data-action="cancel-name">Cancel</button>
       </div>
       <div id="dyn"></div>`;
-    const search = document.getElementById("search") as HTMLInputElement;
-    search.addEventListener("input", () => {
-      S.search = search.value;
-      renderTeam();
-      reportHeight();
-    });
     const nameInput = document.getElementById("name-input") as HTMLInputElement;
     nameInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") void saveName();
@@ -915,7 +908,6 @@ async function joinFromWelcome() {
 function setEditingName(on: boolean) {
   S.editingName = on;
   document.getElementById("name-wrap")!.hidden = !on;
-  document.getElementById("search-wrap")!.hidden = on;
   if (on) {
     const input = document.getElementById("name-input") as HTMLInputElement;
     input.value = S.me?.name ?? "";
@@ -934,14 +926,20 @@ async function saveName() {
   }
 }
 
+/** A small face for the room tiles. */
+function miniAvatar(t: Teammate) {
+  const photo = t.avatarPath ? `<img src="${esc(avatarURL(t.avatarPath))}" alt="" onerror="this.remove()" />` : "";
+  return `<span class="mini" style="background:${colorOf(t.id)}" title="${esc(t.name)}">${esc(initials(t.name))}${photo}</span>`;
+}
+
 function avatarURL(path: string) {
   return `${env.VITE_SUPABASE_URL}/storage/v1/object/public/avatars/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function avatar(t: Teammate) {
+function avatar(t: Teammate, speaking = false) {
   // Their photo covers the initials once it loads (and is removed if it can't).
   const photo = t.avatarPath ? `<img src="${esc(avatarURL(t.avatarPath))}" alt="" onerror="this.remove()" />` : "";
-  return `<div class="avatar" style="background:${colorOf(t.id)}">${esc(initials(t.name))}${photo}${
+  return `<div class="avatar${speaking ? " speaking" : ""}" style="background:${colorOf(t.id)}">${esc(initials(t.name))}${photo}${
     isOnline(t) ? '<span class="dot"></span>' : ""
   }</div>`;
 }
@@ -1034,14 +1032,26 @@ function callBar(call: CallState) {
   </div>`;
 }
 
-function roomRow(n: number) {
+const SPEAKER_ICON = `<svg viewBox="0 0 24 24" width="11" height="11"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+
+/** One always-open voice room, as a tile: who's inside, click to drop in. */
+function roomTile(n: number) {
   const inside = teammatesIn(n);
-  return `<div class="row room clickable" data-action="join" data-room="${n}" title="Join ${roomName(n)}">
-    <div class="icon ${inside.length ? "busy" : ""}">🔊</div>
-    <div class="text"><div class="title">${roomName(n)}</div>
-      <div class="sub">${inside.length ? esc(inside.map((t) => firstName(t.name)).join(", ")) : "Empty"}</div></div>
-    ${inside.length ? `<button class="join" data-action="join" data-room="${n}">Join</button>` : ""}
-  </div>`;
+  const mine = S.call?.number === n;
+  const busy = mine || inside.length > 0;
+  const names = inside.map((t) => firstName(t.name)).join(", ");
+  const help = mine ? `You're in ${roomName(n)}` : inside.length ? `Join ${names} in ${roomName(n)}` : `Join ${roomName(n)}`;
+  const people = inside.length
+    ? `<div class="faces">${inside.slice(0, 3).map(miniAvatar).join("")}${
+        inside.length > 3 ? `<span class="more">+${inside.length - 3}</span>` : ""
+      }</div>`
+    : mine
+      ? `<div class="empty">Just you</div>`
+      : `<div class="empty"><span class="idle">Empty</span><span class="go">Join</span></div>`;
+  return `<button class="tile${busy ? " busy" : ""}${mine ? " mine" : ""}" ${
+    mine ? "" : `data-action="join" data-room="${n}"`
+  } title="${esc(help)}">
+    <div class="tile-name">${SPEAKER_ICON}${roomName(n)}</div>${people}</button>`;
 }
 
 /** Me, at the top of the team: photo, name and what I'm doing. Click to change the photo. */
@@ -1050,7 +1060,7 @@ function meRow(me: Teammate) {
   if (S.call) status = S.call.connecting ? `Joining ${roomName(S.call.number)}…` : `In ${roomName(S.call.number)}`;
   return `<div class="row clickable" data-action="choose-photo" title="Click to ${me.avatarPath ? "change" : "add"} your photo">
     ${avatar(me)}
-    <div class="text"><div class="title">${esc(me.name)} <span class="you">(You)</span></div><div class="sub">${esc(status)}</div></div>
+    <div class="text"><div class="title">${esc(me.name)} <span class="you-tag">You</span></div><div class="sub${S.call ? " active" : ""}">${esc(status)}</div></div>
   </div>`;
 }
 
@@ -1079,8 +1089,8 @@ function teammateRow(t: Teammate) {
   return `<div class="row ${clickable ? "clickable" : ""} ${online ? "" : "offline"}" data-action="${
     sharing ? "view" : joinable !== undefined ? "join" : ""
   }" data-id="${t.id}" ${joinable !== undefined ? `data-room="${joinable}"` : ""}>
-    ${avatar(t)}
-    <div class="text"><div class="title">${esc(t.name)}</div><div class="sub">${esc(status)}</div></div>
+    ${avatar(t, isInMyRoom(t) && S.speaking.has(t.id))}
+    <div class="text"><div class="title">${esc(t.name)}</div><div class="sub${sharing || theirRoom !== undefined ? " active" : ""}">${esc(status)}</div></div>
     ${buttons}
   </div>`;
 }
@@ -1091,8 +1101,7 @@ function renderTeam() {
   const sorted = [...S.teammates].sort((a, b) =>
     isOnline(a) !== isOnline(b) ? (isOnline(a) ? -1 : 1) : a.name.localeCompare(b.name),
   );
-  const query = S.search.trim().toLowerCase();
-  const visible = query ? sorted.filter((t) => t.name.toLowerCase().includes(query)) : sorted;
+  const online = 1 + S.teammates.filter(isOnline).length;
 
   let html = "";
   if (S.incoming) {
@@ -1103,18 +1112,16 @@ function renderTeam() {
       <button class="round green" data-action="accept" title="Accept">📞</button>
     </div>`;
   }
-  for (const n of ROOMS) html += S.call?.number === n ? callBar(S.call) : roomRow(n);
-  html += `<div class="divider"></div>`;
+  html += `<div class="section">Rooms</div>`;
+  if (S.call) html += callBar(S.call);
+  html += `<div class="tiles">${ROOMS.map(roomTile).join("")}</div>`;
+  html += `<div class="section">Team <span>· ${online} online</span></div>`;
   if (S.notice) html += `<div class="notice">${esc(S.notice)}</div>`;
-  if (!query) {
-    html += `<div class="row clickable" data-action="copy-code" title="Click to copy the code, then send it to a teammate">
-      <div class="icon">＋</div>
-      <div class="text"><div class="title" id="invite-title">Invite Teammates</div>
-        <div class="sub">${S.teamCode ? `Team code ${esc(S.teamCode)}` : "…"}</div></div></div>`;
-    if (S.me) html += meRow(S.me);
-  }
-  html += visible.map(teammateRow).join("");
-  if (query && visible.length === 0) html += `<div class="notice">No teammate matches “${esc(S.search.trim())}”.</div>`;
+  if (S.me) html += meRow(S.me);
+  html += sorted.map(teammateRow).join("");
+  html += `<div class="invite" data-action="copy-code" title="Click to copy the code, then send it to a teammate">
+    <svg viewBox="0 0 24 24" width="13" height="13"><circle cx="10" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 19c.8-3.3 3.4-5 6.5-5 1.4 0 2.7.3 3.7 1M18 13v6M15 16h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <span class="label">Invite teammates</span><span class="code">${S.teamCode ? esc(S.teamCode) : "…"}</span></div>`;
   if (S.error) html += `<div class="error">${esc(S.error)}</div>`;
   dyn.innerHTML = html;
 }
@@ -1351,7 +1358,6 @@ document.addEventListener("keydown", (e) => {
 // Refresh the list each time the panel opens (new or removed teammates).
 void listen("panel-shown", () => {
   if (S.phase === "team") void reloadTeam();
-  if (!S.editingName) (document.getElementById("search") as HTMLInputElement | null)?.focus();
 });
 
 void start();
