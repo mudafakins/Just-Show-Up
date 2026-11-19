@@ -179,18 +179,18 @@ private struct TeamList: View {
             }
 
             SectionLabel(title: "Rooms")
-            // The rooms: controls for the one I'm in, a join row for the others.
-            ForEach(Rooms.numbers, id: \.self) { number in
-                if team.call?.number == number {
-                    CallBar()
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.green.opacity(0.13)))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 1)
-                } else {
-                    RoomRow(number: number)
-                        .padding(.horizontal, 6)
-                }
+            // My room's controls while I'm in one, then the three rooms side by side.
+            if team.call != nil {
+                CallBar()
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.green.opacity(0.13)))
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
             }
+            HStack(spacing: 6) {
+                ForEach(Rooms.numbers, id: \.self) { RoomTile(number: $0) }
+            }
+            .padding(.horizontal, 10)
             SectionLabel(title: "Team", detail: "\(onlineCount) online")
             if let notice = team.notice {
                 Text(notice)
@@ -202,12 +202,13 @@ private struct TeamList: View {
             }
 
             VStack(spacing: 0) {
-                if search.trimmed.isEmpty {
-                    TeamCodeRow()
-                    if let me = team.me { MeRow(me: me) }
-                }
+                if search.trimmed.isEmpty, let me = team.me { MeRow(me: me) }
                 ForEach(visibleTeammates) { teammate in
                     TeammateRow(teammate: teammate)
+                }
+                if search.trimmed.isEmpty {
+                    TeamCodeRow()
+                        .padding(.top, 6)
                 }
                 if visibleTeammates.isEmpty && !search.trimmed.isEmpty {
                     Text("No teammate matches “\(search.trimmed)”.")
@@ -603,50 +604,58 @@ private struct SearchField: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-            TextField("Find Teammates", text: $text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.tertiary)
+            TextField("Find teammates", text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .focused($isFocused)
         }
         .padding(.horizontal, 11)
-        .frame(height: 34)
-        .background(Capsule().fill(Color.primary.opacity(0.06)))
-        .overlay(
-            Capsule().strokeBorder(
-                isFocused ? Color.accentColor.opacity(0.8) : Color.primary.opacity(0.12),
-                lineWidth: isFocused ? 2 : 1
-            )
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.primary.opacity(isFocused ? 0.08 : 0.05))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(isFocused ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
+        .animation(.easeOut(duration: 0.12), value: isFocused)
     }
 }
 
-/// Shows the team code; click to copy it for a teammate.
+/// A slim footer with the team code; click to copy it for a teammate.
 private struct TeamCodeRow: View {
     @EnvironmentObject private var team: TeamStore
     @State private var copied = false
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: RowMetrics.spacing) {
+        HStack(spacing: 8) {
             Image(systemName: copied ? "checkmark" : "person.badge.plus")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(copied ? Color.green : Color.secondary)
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: RowMetrics.lead, height: RowMetrics.lead)
-                .background(Circle().fill(Color.primary.opacity(0.08)))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(copied ? "Code Copied" : "Invite Teammates")
-                    .font(.system(size: 14, weight: .medium))
-                Text(team.teamCode.map { "Team code \($0)" } ?? "…")
-                    .font(.system(size: 11.5).monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+                .frame(width: 16)
+            Text(copied ? "Code copied" : "Invite teammates")
+                .font(.system(size: 12, weight: .medium))
             Spacer(minLength: 0)
+            Text(team.teamCode ?? "…")
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(.secondary)
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
         }
-        .rowStyle(isHovered: isHovered)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.09 : 0.05))
+        )
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .onHover { isHovered = $0 }
         .onTapGesture {
             team.copyTeamCode()
@@ -656,50 +665,105 @@ private struct TeamCodeRow: View {
                 copied = false
             }
         }
+        .padding(.horizontal, 4)
         .help("Click to copy the code, then send it to a teammate")
     }
 }
 
-/// One always-open voice room. Click to drop in; nobody gets rung.
-private struct RoomRow: View {
+/// One always-open voice room, as a tile: who's inside, click to drop in.
+private struct RoomTile: View {
     @EnvironmentObject private var team: TeamStore
     let number: Int
     @State private var isHovered = false
 
     private var inside: [Teammate] { team.teammates(in: number) }
+    private var isMine: Bool { team.call?.number == number }
+    private var isBusy: Bool { isMine || !inside.isEmpty }
 
     var body: some View {
-        HStack(spacing: RowMetrics.spacing) {
-            Image(systemName: inside.isEmpty ? "speaker.wave.2" : "speaker.wave.2.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(inside.isEmpty ? Color.secondary : Color.white)
-                .frame(width: RowMetrics.lead, height: RowMetrics.lead)
-                .background(Circle().fill(inside.isEmpty ? Color.primary.opacity(0.08) : Color.green))
+        Button { if !isMine { team.joinRoom(number) } } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 5) {
+                    Image(systemName: isBusy ? "speaker.wave.2.fill" : "speaker.wave.2")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(Rooms.name(number))
+                        .font(.system(size: 12.5, weight: .semibold))
+                }
+                .foregroundStyle(isBusy ? Color.green : Color.primary)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(Rooms.name(number))
-                    .font(.system(size: 14, weight: .medium))
-                Text(subtitle)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(inside.isEmpty ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.green))
-                    .lineLimit(1)
+                people
+                    .frame(height: 20, alignment: .leading)
             }
-            Spacer(minLength: 0)
-
-            if isHovered || !inside.isEmpty {
-                JoinRoomButton(number: number)
-                    .transition(.opacity)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(fill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isBusy ? Color.green.opacity(0.35) : Color.primary.opacity(0.06), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .rowStyle(isHovered: isHovered)
+        .buttonStyle(PressableStyle())
         .onHover { isHovered = $0 }
-        .onTapGesture { team.joinRoom(number) }
-        .help("Join \(Rooms.name(number))")
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .help(help)
     }
 
-    private var subtitle: String {
-        if inside.isEmpty { return "Empty" }
-        return inside.map { $0.name.components(separatedBy: " ")[0] }.joined(separator: ", ")
+    private var fill: Color {
+        if isMine { return Color.green.opacity(0.2) }
+        if !inside.isEmpty { return Color.green.opacity(isHovered ? 0.16 : 0.1) }
+        return Color.primary.opacity(isHovered ? 0.09 : 0.05)
+    }
+
+    @ViewBuilder private var people: some View {
+        if inside.isEmpty {
+            Text(isMine ? "Just you" : isHovered ? "Join" : "Empty")
+                .font(.system(size: 11, weight: isHovered && !isMine ? .semibold : .regular))
+                .foregroundStyle(isHovered && !isMine ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
+        } else {
+            HStack(spacing: -6) {
+                ForEach(inside.prefix(3)) { MiniAvatar(teammate: $0) }
+                if inside.count > 3 {
+                    Text("+\(inside.count - 3)")
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.leading, 9)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var help: String {
+        if isMine { return "You're in \(Rooms.name(number))" }
+        if inside.isEmpty { return "Join \(Rooms.name(number))" }
+        let names = inside.map { $0.name.components(separatedBy: " ")[0] }.joined(separator: ", ")
+        return "Join \(names) in \(Rooms.name(number))"
+    }
+}
+
+/// A small face for the room tiles.
+private struct MiniAvatar: View {
+    let teammate: Teammate
+
+    var body: some View {
+        Circle()
+            .fill(teammate.color.gradient)
+            .overlay(
+                Text(teammate.initials)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+            )
+            .overlay {
+                if let url = teammate.avatarURL {
+                    AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.clear }
+                        .clipShape(Circle())
+                }
+            }
+            .frame(width: 20, height: 20)
+            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
     }
 }
 
@@ -932,6 +996,8 @@ private struct RingButton: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(Color.primary.opacity(0.08)))
             .help("Call \(teammate.name) to a room")
         }
     }
