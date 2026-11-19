@@ -46,7 +46,7 @@ enum Main {
 
 /// Owns the menu bar icon and the popover (with its arrow) that drops from it.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate {
     private let team = TeamStore()
     private let updater = Updater()
     private var statusItem: NSStatusItem!
@@ -59,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         updateIcon()
+        // Dragging files onto the menu bar icon opens the panel, so they can be
+        // dropped on a teammate (a click in Finder would otherwise close it).
+        statusItem.button?.window?.registerForDraggedTypes([.fileURL])
+        statusItem.button?.window?.delegate = self
 
         let host = NSHostingController(rootView: TeamPanel().environmentObject(team).environmentObject(updater).environmentObject(team.files))
         // Let the popover grow and shrink with the panel's content.
@@ -120,6 +124,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             Task { @MainActor in self?.popover.performClose(nil) }
         }
     }
+
+    // The menu bar icon's window, as a drop target.
+    @objc func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard team.phase == .inTeam else { return [] }
+        showPopover()
+        return .copy
+    }
+
+    @objc func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        team.phase == .inTeam ? .copy : []
+    }
+
+    /// Dropped on the icon itself rather than on a teammate: nothing to do.
+    @objc func performDragOperation(_ sender: NSDraggingInfo) -> Bool { false }
 
     func popoverDidClose(_ notification: Notification) {
         if let monitor = outsideClickMonitor {
