@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "just-show-up"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "serde",
  "serde_json",
