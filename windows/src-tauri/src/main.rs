@@ -170,18 +170,43 @@ fn enter_panel(app: AppHandle, show: bool) {
 }
 
 /// Opens the see-through drawing layer over the monitor whose shape matches what I'm sharing.
+///
+/// This must be `async`. A plain command runs on the main thread, inside WebView2's
+/// message callback, and on Windows creating a webview there never finishes (see the
+/// "Known issues" on `WebviewWindowBuilder::build`): the overlay stayed an empty,
+/// invisible window, so teammates' cursors and drawings never showed while sharing.
+/// macOS doesn't have this problem, which is why the Mac app was fine.
 #[tauri::command]
-fn open_overlay(app: AppHandle, aspect: f64) -> Result<(), String> {
+async fn open_overlay(app: AppHandle, aspect: f64) -> Result<(), String> {
+    // Off the main thread, destroying is queued, so wait until the old one is gone
+    // before reusing its label.
     close_overlay(app.clone());
+    for _ in 0..50 {
+        if app.get_webview_window("overlay").is_none() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let main = main_window(&app).ok_or("no main window")?;
     let monitors = main.available_monitors().map_err(|e| e.to_string())?;
     let primary = main.primary_monitor().ok().flatten();
     let ratio = |m: &tauri::Monitor| m.size().width as f64 / m.size().height.max(1) as f64;
+    let is_primary = |m: &tauri::Monitor| primary.as_ref().is_some_and(|p| p.position() == m.position());
     let mut best = primary.clone();
     if monitors.len() > 1 && aspect > 0.0 {
+        // Closest shape wins; when screens are the same shape (a laptop and a 16:9
+        // monitor at the same ratio), prefer the main display.
         best = monitors
             .into_iter()
-            .min_by(|a, b| (ratio(a) - aspect).abs().total_cmp(&(ratio(b) - aspect).abs()))
+            .min_by(|a, b| {
+                let da = (ratio(a) - aspect).abs();
+                let db = (ratio(b) - aspect).abs();
+                if (da - db).abs() < 0.01 {
+                    is_primary(b).cmp(&is_primary(a))
+                } else {
+                    da.total_cmp(&db)
+                }
+            })
             .or(primary);
     }
     let monitor = best.ok_or("no monitor")?;
@@ -200,27 +225,37 @@ fn open_overlay(app: AppHandle, aspect: f64) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let _ = overlay.set_position(*monitor.position());
     let _ = overlay.set_size(PhysicalSize::new(monitor.size().width, monitor.size().height));
-    set_click_through(&overlay, true);
-    let _ = overlay.show();
+    set_click_through(&overlay, true, true);
     Ok(())
 }
 
-/// Lets clicks pass through the overlay (or not, in draw mode).
+/// Lets clicks pass through the overlay (or not, in draw mode), then optionally shows it.
 ///
 /// On Windows, click-through makes the window "layered", and Windows doesn't draw a
 /// layered window until it has been given its opacity, which tao never does. So give
 /// it full opacity; the page's own transparency still shows the screen underneath.
-fn set_click_through(overlay: &WebviewWindow, on: bool) {
-    let _ = overlay.set_ignore_cursor_events(on);
-    #[cfg(windows)]
-    if on {
-        if let Ok(hwnd) = overlay.hwnd() {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, LWA_ALPHA};
-            unsafe {
-                SetLayeredWindowAttributes(hwnd.0 as _, 0, 255, LWA_ALPHA);
+///
+/// The steps must happen in this order. From any thread but the main one, tao only
+/// queues the style change, so the opacity call would land first, on a window that
+/// isn't layered yet, and be ignored. So do all of it on the main thread, where each
+/// call takes effect straight away.
+fn set_click_through(overlay: &WebviewWindow, on: bool, show: bool) {
+    let window = overlay.clone();
+    let _ = overlay.run_on_main_thread(move || {
+        let _ = window.set_ignore_cursor_events(on);
+        #[cfg(windows)]
+        if on {
+            if let Ok(hwnd) = window.hwnd() {
+                use windows_sys::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, LWA_ALPHA};
+                unsafe {
+                    SetLayeredWindowAttributes(hwnd.0 as _, 0, 255, LWA_ALPHA);
+                }
             }
         }
-    }
+        if show {
+            let _ = window.show();
+        }
+    });
 }
 
 #[tauri::command]
@@ -234,7 +269,7 @@ fn close_overlay(app: AppHandle) {
 #[tauri::command]
 fn set_overlay_interactive(app: AppHandle, on: bool) {
     if let Some(overlay) = app.get_webview_window("overlay") {
-        set_click_through(&overlay, !on);
+        set_click_through(&overlay, !on, false);
         if on {
             let _ = overlay.set_focus();
         }
