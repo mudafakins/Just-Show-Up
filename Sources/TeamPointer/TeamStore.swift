@@ -99,6 +99,10 @@ final class TeamStore: ObservableObject {
     private let client: SupabaseClient?
     private var teamID: UUID?
     private var onlineIDs: Set<UUID> = []
+    /// Every live connection each person has on the team channel (by its server
+    /// reference), with the room it reports. Someone who reconnects briefly has two;
+    /// when the old one times out they must stay online.
+    private var connections: [UUID: [String: Int?]] = [:]
     private var presenceChannel: RealtimeChannelV2?
     private var presenceTask: Task<Void, Never>?
     private var signalTask: Task<Void, Never>?
@@ -131,6 +135,7 @@ final class TeamStore: ObservableObject {
             }
             self.call?.connected = ids
             for id in ids { self.ringingTeammates[id] = nil }
+            self.refreshOnline()
         }
         engine.onRemoteSharesChanged = { [weak self] ids in
             guard let self else { return }
@@ -264,7 +269,7 @@ final class TeamStore: ObservableObject {
             me = Teammate(mine, isOnline: true)
             teammates = profiles
                 .filter { $0.id != userID }
-                .map { Teammate($0, isOnline: onlineIDs.contains($0.id)) }
+                .map { Teammate($0, isOnline: isLive($0.id)) }
             phase = .inTeam
         } catch {
             errorMessage = friendlyMessage(error)
@@ -378,14 +383,7 @@ final class TeamStore: ObservableObject {
         let changes = channel.presenceChange()
         presenceTask = Task { [weak self] in
             for await change in changes {
-                let left = (try? change.decodeLeaves(as: PresenceState.self)) ?? []
-                let joined = (try? change.decodeJoins(as: PresenceState.self)) ?? []
-                await self?.applyPresence(
-                    joined: joined.compactMap { state in
-                        UUID(uuidString: state.userID).map { ($0, state.room) }
-                    },
-                    left: left.compactMap { UUID(uuidString: $0.userID) }
-                )
+                await self?.applyPresence(change.rawMessage)
             }
         }
 
@@ -418,6 +416,7 @@ final class TeamStore: ObservableObject {
         }
         presenceChannel = nil
         onlineIDs = []
+        connections = [:]
         roomMembers = [:]
     }
 
@@ -428,15 +427,52 @@ final class TeamStore: ObservableObject {
         try? await channel.track(PresenceState(userID: me.id.uuidString.lowercased(), room: room))
     }
 
-    private func applyPresence(joined: [(id: UUID, room: Int?)], left: [UUID]) async {
-        // An update arrives as "left" (old state) plus "joined" (new state) for the same person.
-        onlineIDs.subtract(left)
-        for id in left { roomMembers[id] = nil }
-        onlineIDs.formUnion(joined.map(\.id))
-        for entry in joined {
-            if let room = entry.room, Rooms.numbers.contains(room) { roomMembers[entry.id] = room }
+    /// Reads the server's presence messages directly: the SDK's summary keeps only one
+    /// connection per person, which marked people offline when a stale connection of
+    /// theirs timed out while their current one was fine.
+    private func applyPresence(_ message: RealtimeMessageV2) async {
+        func entries(_ json: JSONObject?) -> [(id: UUID, ref: String, room: Int?)] {
+            var found: [(UUID, String, Int?)] = []
+            for value in (json ?? [:]).values {
+                for meta in value.objectValue?["metas"]?.arrayValue ?? [] {
+                    guard let meta = meta.objectValue,
+                          let ref = meta["phx_ref"]?.stringValue,
+                          let id = meta["user_id"]?.stringValue.flatMap(UUID.init(uuidString:))
+                    else { continue }
+                    let room = meta["room"]?.intValue ?? meta["room"]?.doubleValue.map { Int($0) }
+                    found.append((id, ref, room))
+                }
+            }
+            return found
         }
-        if let myID = me?.id { roomMembers[myID] = nil }
+
+        let joined: [(id: UUID, ref: String, room: Int?)]
+        if message.event == "presence_state" {
+            // The full list, sent when (re)joining the channel.
+            connections = [:]
+            joined = entries(message.payload)
+        } else {
+            for entry in entries(message.payload["leaves"]?.objectValue) {
+                connections[entry.id]?[entry.ref] = nil
+                if connections[entry.id]?.isEmpty == true { connections[entry.id] = nil }
+            }
+            joined = entries(message.payload["joins"]?.objectValue)
+        }
+        for entry in joined {
+            connections[entry.id, default: [:]][entry.ref] = .some(entry.room)
+        }
+
+        onlineIDs = Set(connections.keys)
+        var rooms: [UUID: Int] = [:]
+        for (id, refs) in connections {
+            // If any of their connections says it is in a room, show them there.
+            if let room = refs.sorted(by: { $0.key < $1.key }).compactMap({ $0.value }).last,
+               Rooms.numbers.contains(room) {
+                rooms[id] = room
+            }
+        }
+        if let myID = me?.id { rooms[myID] = nil }
+        roomMembers = rooms
         // Someone I'm calling arrived in the room I called them to.
         ringingTeammates = ringingTeammates.filter { roomMembers[$0.key] != $0.value }
         // Whoever is calling me went offline.
@@ -449,10 +485,20 @@ final class TeamStore: ObservableObject {
         if !Set(joined.map(\.id)).isSubset(of: known) {
             await reloadTeam()
         }
-        for index in teammates.indices {
-            teammates[index].isOnline = onlineIDs.contains(teammates[index].id)
-        }
+        refreshOnline()
+    }
 
+    /// Online means on the team channel, or (whatever the channel says) right here in
+    /// my room: someone talking to me is plainly online.
+    private func isLive(_ id: UUID) -> Bool {
+        onlineIDs.contains(id) || (call?.connected.contains(id) ?? false)
+    }
+
+    private func refreshOnline() {
+        for index in teammates.indices {
+            let live = isLive(teammates[index].id)
+            if teammates[index].isOnline != live { teammates[index].isOnline = live }
+        }
     }
 
     // MARK: Rooms

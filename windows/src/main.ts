@@ -109,7 +109,9 @@ const nameOf = (id: string) => {
   return S.teammates.find((t) => t.id === norm(id))?.name ?? "Teammate";
 };
 const firstName = (name: string) => name.split(" ")[0] || name;
-const isOnline = (t: Teammate) => S.online.has(t.id);
+// Online means on the team channel, or (whatever the channel says) right here in my
+// room: someone talking to me is plainly online.
+const isOnline = (t: Teammate) => S.online.has(t.id) || !!S.call?.connected.has(t.id);
 const teamRoomID = (n: number) => `${S.teamID}:room${n}`;
 
 function roomOf(t: Teammate): number | undefined {
