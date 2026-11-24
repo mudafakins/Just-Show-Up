@@ -52,7 +52,13 @@ final class CallEngine {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
+    /// Lets the shared screen's sound play through the call's audio engine (see SharedSound).
+    private static let installPlayout: Void = {
+        AudioManager.shared.set(engineObservers: [Playout.shared, AudioManager.shared.mixer])
+    }()
+
     func connect(url: String, token: String) async throws {
+        _ = Self.installPlayout
         let relay = Relay(engine: self)
         let room = Room(delegate: relay, roomOptions: RoomOptions(
             // Echo cancellation, noise suppression and automatic gain run through macOS's own
@@ -108,6 +114,7 @@ final class CallEngine {
     }
 
     private func cleanUpSharing() {
+        if #available(macOS 14.2, *) { SharedSound.shared.stop() }
         if sharePublication != nil {
             sharePublication = nil
             onLocalShareStopped?()
@@ -251,12 +258,16 @@ final class CallEngine {
     func startSharing(_ share: ShareSource) async throws {
         guard let room else { return }
         await stopSharing()
+        // The computer's sound: through a process tap where possible (no echo without
+        // headphones), otherwise ScreenCaptureKit's app audio.
+        var tapping = false
+        if #available(macOS 14.2, *) { tapping = SharedSound.shared.start() }
         let track = await LocalVideoTrack.createMacOSScreenShareTrack(
             source: share.source,
             // 15 fps is plenty for screens and keeps text sharp at a modest bitrate.
             // appAudio: what's playing on my computer goes along with the screen (this
             // app's own sound, i.e. the call, is left out so nobody hears an echo).
-            options: ScreenShareCaptureOptions(dimensions: share.dimensions, fps: 15, showCursor: true, appAudio: true)
+            options: ScreenShareCaptureOptions(dimensions: share.dimensions, fps: 15, showCursor: true, appAudio: !tapping)
         )
         sharePublication = try await room.localParticipant.publish(
             videoTrack: track,
@@ -296,6 +307,7 @@ final class CallEngine {
         guard let publication = sharePublication else { return }
         sharePublication = nil
         closeOverlay()
+        if #available(macOS 14.2, *) { SharedSound.shared.stop() }
         try? await room?.localParticipant.unpublish(publication: publication)
         // Back to a normal mute now the computer's sound isn't being shared.
         await setMuted(isMuted)
