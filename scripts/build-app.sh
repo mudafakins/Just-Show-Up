@@ -60,7 +60,7 @@ mkdir -p "$APP/Contents/Resources"
 cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # Ringtone sound clips (Settings → Ringtone).
 mkdir -p "$APP/Contents/Resources/Ringtones"
-cp "$ROOT"/Ringtones/*.mp3 "$APP/Contents/Resources/Ringtones/"
+cp "$ROOT"/Ringtones/*.mp3 "$ROOT"/Ringtones/*.m4a "$APP/Contents/Resources/Ringtones/"
 # No extended attributes (they would ride along in the zip as "._" files).
 xattr -cr "$APP/Contents/Resources/Ringtones"
 if [[ -f "$ROOT/Config.local.json" ]]; then

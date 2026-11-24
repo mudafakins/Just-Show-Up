@@ -8,6 +8,8 @@ enum Sounds {
     enum Cue {
         case join, leave, teammateJoined, teammateLeft
         case shareStarted, shareStopped, teammateShareStarted, teammateShareStopped
+        /// My own mic: a quick soft tick, up for unmute, down for mute.
+        case muted, unmuted
     }
 
     static let enabledKey = "playSounds"
@@ -27,6 +29,7 @@ enum Sounds {
         switch cue {
         case .join, .leave, .shareStarted, .shareStopped: sound.volume = 0.5
         case .teammateJoined, .teammateLeft, .teammateShareStarted, .teammateShareStopped: sound.volume = 0.3
+        case .muted, .unmuted: sound.volume = 0.4
         }
         // Keep a reference until it finishes, or it stops early.
         playing.removeAll { !$0.isPlaying }
@@ -43,6 +46,9 @@ enum Sounds {
         // E6, G#6, B6: a bright major arpeggio, quicker than the room chimes.
         case .shareStarted, .teammateShareStarted: return tones([1318.5, 1661.2, 1975.5], step: 0.065, ring: 0.24)
         case .shareStopped, .teammateShareStopped: return tones([1975.5, 1661.2, 1318.5], step: 0.065, ring: 0.24)
+        // A5 and E6, short and close together, so it reads as a click of a switch.
+        case .unmuted: return tones([880, 1318.5], step: 0.05, ring: 0.12)
+        case .muted: return tones([1318.5, 880], step: 0.05, ring: 0.12)
         }
     }
 

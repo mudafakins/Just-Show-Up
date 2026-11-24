@@ -9,7 +9,9 @@ export type Cue =
   | "shareStarted"
   | "shareStopped"
   | "teammateShareStarted"
-  | "teammateShareStopped";
+  | "teammateShareStopped"
+  | "muted"
+  | "unmuted";
 
 const KEY = "playSounds";
 export const sounds = {
@@ -24,6 +26,10 @@ export function playSound(cue: Cue) {
   context ??= new AudioContext();
   const ctx = context;
   void ctx.resume();
+  // My own mic: a quick soft tick (A5, E6), up for unmute, down for mute.
+  if (cue === "muted" || cue === "unmuted") {
+    return blip(ctx, cue === "unmuted" ? [880, 1318.5] : [1318.5, 880], 0.05, 0.12, 0.11);
+  }
   const low = 783.99; // G5
   const high = 1046.5; // C6
   // Rooms: two notes. Sharing: a quicker, brighter three-note run (E6, G#6, B6).
@@ -52,5 +58,22 @@ export function playSound(cue: Cue) {
       osc.start(t);
       osc.stop(t + ring + 0.02);
     }
+  });
+}
+
+function blip(ctx: AudioContext, notes: number[], step: number, ring: number, volume: number) {
+  const start = ctx.currentTime + 0.02;
+  notes.forEach((frequency, n) => {
+    const t = start + n * step;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(volume, t + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + ring);
+    gain.connect(ctx.destination);
+    const osc = ctx.createOscillator();
+    osc.frequency.value = frequency;
+    osc.connect(gain);
+    osc.start(t);
+    osc.stop(t + ring + 0.02);
   });
 }

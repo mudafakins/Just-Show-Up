@@ -586,6 +586,7 @@ function leaveRoom() {
 
 async function toggleMute() {
   S.muted = !S.muted;
+  playSound(S.muted ? "muted" : "unmuted");
   S.notice = undefined;
   render();
   try {

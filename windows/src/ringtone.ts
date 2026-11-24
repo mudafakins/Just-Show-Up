@@ -14,13 +14,13 @@ type ToneID = (typeof TONES)[number]["id"];
 export type Ringtone = { id: string; title: string; url?: string; tone?: ToneID };
 
 // "01 - Title.mp3" → id "clip:01 - Title", shown as "Title" (same ids as the Mac).
-const clipFiles = import.meta.glob("../../Ringtones/*.mp3", { eager: true, query: "?url", import: "default" }) as Record<
+const clipFiles = import.meta.glob("../../Ringtones/*.{mp3,m4a}", { eager: true, query: "?url", import: "default" }) as Record<
   string,
   string
 >;
 export const CLIPS: Ringtone[] = Object.entries(clipFiles)
   .map(([path, url]) => {
-    const name = decodeURIComponent(path.split("/").pop()!.replace(/\.mp3$/i, ""));
+    const name = decodeURIComponent(path.split("/").pop()!.replace(/\.(mp3|m4a)$/i, ""));
     return { id: `clip:${name}`, title: name.replace(/^\d+\s*-\s*/, ""), url };
   })
   .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
@@ -194,6 +194,9 @@ export function stopClip() {
 }
 
 const EMOJI: [string, string][] = [
+  // The newer clips (specific words first, so "Funny Bell" is a bell).
+  ["kbc", "💰"], ["bell", "🔔"], ["drum", "🥁"], ["slap", "👋"], ["scream", "😱"], ["gun shot", "🔫"], ["suspense", "🕵️"], ["climax", "🎬"], ["mid night", "🌙"], ["alert", "🚨"], ["doubt", "🤔"], ["bechara", "😢"], ["woooiii", "😵"], ["ayee", "😲"], ["rom rom", "💻"], ["gajab", "🤩"], ["cheating", "🕵️"], ["garmi", "🥵"], ["are baba", "🙏"], ["know", "🤷"], ["thick", "👍"], ["samajh", "🧠"], ["samjha", "🧠"], ["kidhar", "🔍"], ["aja aja", "👉"], ["bheek", "🙏"], ["jhoot", "🤥"], ["acchi baat", "👏"], ["uth ja", "⏰"], ["maro", "🥊"], ["khatam", "👋"], ["mistake", "🤦"], ["bawal", "🔥"], ["paisa", "💰"], ["paise", "💰"], ["rupiya", "💰"], ["ab dekh", "👀"], ["what", "❓"], ["ab bol", "🗣️"], ["ye le", "🎁"], ["aayen", "😮"], ["bahar", "🚪"], ["baigan", "🍆"], ["bap re", "😱"], ["kya hal", "👋"], ["yeh kya", "😳"], ["kaise", "😳"], ["lekin", "☝️"], ["shocked", "😨"], ["wow", "😍"], ["chal chal", "🚶"], ["chalo", "🏃"], ["level", "😎"], ["maa tari", "🙏"], ["bataunga", "🤐"], ["tera baap", "👴"], ["janam", "💘"], ["maaf", "🙏"], ["sasur", "👴"], ["chup", "🤫"], ["control", "🎮"], ["daiyaa", "😳"], ["ghachar", "😵"], ["jalwa", "😎"], ["dimag", "🤯"], ["naam", "🙅"], ["turu lob", "😍"], ["technologia", "🤖"], ["tu kon", "🤨"], ["achcha", "👌"], ["acha", "👌"], ["kadak", "🔥"], ["maza", "😎"], ["gali", "🤬"], ["yaha pe", "🤔"], ["normal", "🔊"],
+  // The original clips.
   ["title theme", "🎬"], ["intro", "🎺"], ["hey hey", "👋"], ["laugh", "😂"],
   ["aaiye", "🙏"], ["dramatic", "😱"], ["yes", "🙌"], ["turr", "💨"],
   ["flute", "🎶"], ["nahi", "🙅"], ["uhh", "😩"], ["haaa", "😮"],

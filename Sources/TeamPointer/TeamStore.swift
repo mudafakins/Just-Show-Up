@@ -666,6 +666,7 @@ final class TeamStore: ObservableObject {
     func toggleMute() {
         isMuted.toggle()
         let muted = isMuted
+        Sounds.play(muted ? .muted : .unmuted)
         Task { await engine.setMuted(muted) }
     }
 
