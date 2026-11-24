@@ -54,9 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var outsideClickMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        #if DEBUG
-        SharedSoundSelfTest.runIfAsked()
-        #endif
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
@@ -79,9 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return team.call == nil && team.incomingRing == nil && !team.isSharingScreen
         }
         updater.start()
-        #if DEBUG
-        EchoSelfTest.runIfAsked(team: team)
-        #endif
     }
 
     /// The menu bar always shows the app's mark, whatever the app is doing.

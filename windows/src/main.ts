@@ -461,7 +461,6 @@ async function connectRoom(name: string): Promise<boolean> {
   if (!S.muted) {
     try {
       await lk.localParticipant.setMicrophoneEnabled(true);
-      void cancelAllComputerSound();
     } catch (e) {
       S.muted = true;
       S.notice = micProblem(e);
@@ -585,24 +584,6 @@ function leaveRoom() {
   })();
 }
 
-/**
- * Asks the mic's echo remover to take out everything the computer plays, not just the
- * call. Without this, a screen share's video playing on speakers reaches teammates
- * twice (once shared, once through my mic). Only newer web engines offer it; elsewhere
- * nothing changes and headphones avoid the doubling.
- */
-async function cancelAllComputerSound() {
-  const mic = room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
-  if (!mic?.getCapabilities) return;
-  const supported = (mic.getCapabilities() as { echoCancellation?: unknown }).echoCancellation;
-  if (!Array.isArray(supported) || !supported.includes("all")) return;
-  try {
-    await mic.applyConstraints({ ...mic.getConstraints(), echoCancellation: "all" } as unknown as MediaTrackConstraints);
-  } catch {
-    /* keep the normal echo cancellation */
-  }
-}
-
 async function toggleMute() {
   S.muted = !S.muted;
   playSound(S.muted ? "muted" : "unmuted");
@@ -610,7 +591,6 @@ async function toggleMute() {
   render();
   try {
     await room?.localParticipant.setMicrophoneEnabled(!S.muted);
-    if (!S.muted) void cancelAllComputerSound();
   } catch (e) {
     S.muted = true;
     S.notice = micProblem(e);
@@ -667,12 +647,7 @@ async function startSharing() {
     await room.localParticipant.setScreenShareEnabled(
       true,
       {
-        // The computer's sound goes along with the screen (Windows offers a "Share
-        // system audio" switch in the picker, on by default here). restrictOwnAudio
-        // leaves out this app's own sound (the call), so nobody hears an echo; the
-        // rest is left untouched, since it's music or video, not a voice.
-        audio: { restrictOwnAudio: true, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-        systemAudio: "include",
+        audio: false,
         resolution: { width: 2560, height: 1440, frameRate: 15 },
         contentHint: "text",
         video: { displaySurface: "monitor" },

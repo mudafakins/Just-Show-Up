@@ -22,8 +22,6 @@
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSAudioCaptureUsageDescription</key>
-    <string>When you share your screen, your computer's sound is shared too, without an echo even on speakers.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Your microphone is used for calls with your teammates.</string>
 </dict>
