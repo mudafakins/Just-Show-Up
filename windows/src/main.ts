@@ -1167,12 +1167,49 @@ function soundboardMenu(anchor: HTMLElement) {
     anchor,
     `<div class="sb-head"><b>Soundboard</b><button data-action="sb-stop" title="${S.call ? "Stop the sound for everyone in the room" : "Stop the sound"}">■ Stop</button></div>
      <div class="label">${who}</div>
-     <div class="sb-grid">${CLIPS.map(
-       (c) =>
-         `<button data-action="sb" data-id="${esc(c.id)}" title="${esc(c.title)}"><span>${clipEmoji(c.title)}</span>${esc(c.title)}</button>`,
-     ).join("")}</div>`,
+     <div class="sb-grid">${soundboardGrid()}</div>`,
   );
   menuEl!.classList.add("soundboard");
+}
+
+// Favourite sounds, in the order they were starred.
+const FAVOURITES_KEY = "soundboardFavourites";
+function favourites(): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(FAVOURITES_KEY) ?? "[]") as string[];
+    return list.filter((id) => CLIPS.some((c) => c.id === id));
+  } catch {
+    return [];
+  }
+}
+
+function toggleFavourite(id: string) {
+  const list = favourites();
+  const at = list.indexOf(id);
+  if (at >= 0) list.splice(at, 1);
+  else list.push(id);
+  localStorage.setItem(FAVOURITES_KEY, JSON.stringify(list));
+  // Redraw just the grid, keeping the scroll position.
+  const grid = menuEl?.querySelector<HTMLElement>(".sb-grid");
+  if (grid) {
+    const top = grid.scrollTop;
+    grid.innerHTML = soundboardGrid();
+    grid.scrollTop = top;
+  }
+}
+
+/** Favourites first (in the order they were starred), then everything else. */
+function soundboardGrid() {
+  const starred = favourites();
+  const tile = (id: string, favourite: boolean) => {
+    const c = CLIPS.find((x) => x.id === id)!;
+    return `<button data-action="sb" data-id="${esc(c.id)}" title="${esc(c.title)}"><span>${clipEmoji(c.title)}</span>${esc(c.title)}<i class="fav${
+      favourite ? " on" : ""
+    }" data-action="sb-fav" data-id="${esc(c.id)}" title="${favourite ? "Remove from favourites" : "Add to favourites"}">${favourite ? "★" : "☆"}</i></button>`;
+  };
+  const rest = CLIPS.filter((c) => !starred.includes(c.id)).map((c) => tile(c.id, false)).join("");
+  if (!starred.length) return rest;
+  return `<div class="sb-section">Favourites</div>${starred.map((id) => tile(id, true)).join("")}<div class="sb-section">All sounds</div>${rest}`;
 }
 
 /** Settings → Ringtone: every sound, with a preview when you point at one. */
@@ -1246,7 +1283,7 @@ document.addEventListener("click", (event) => {
   const id = target.dataset.id;
   const n = Number(target.dataset.room);
   const teammate = id ? S.teammates.find((t) => t.id === id) : undefined;
-  if (inMenu && target.dataset.action !== "sb" && target.dataset.action !== "sb-stop") closeMenu();
+  if (inMenu && !["sb", "sb-stop", "sb-fav"].includes(target.dataset.action ?? "")) closeMenu();
 
   switch (target.dataset.action) {
     case "gear":
@@ -1301,6 +1338,8 @@ document.addEventListener("click", (event) => {
       return render();
     case "soundboard":
       return menuEl?.classList.contains("soundboard") ? closeMenu() : soundboardMenu(target);
+    case "sb-fav":
+      return id && toggleFavourite(id);
     case "sb":
       playClip(id!);
       if (room && S.call) {

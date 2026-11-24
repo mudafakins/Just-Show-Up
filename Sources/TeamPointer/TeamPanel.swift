@@ -341,6 +341,19 @@ private struct Header: View {
 private struct SoundboardCard: View {
     @EnvironmentObject private var team: TeamStore
     @State private var hovered: String?
+    /// Favourite sounds, in the order they were starred (one id per line).
+    @AppStorage("soundboardFavourites") private var favouritesText = ""
+
+    private var favourites: [String] {
+        let known = Set(Soundboard.clips.map(\.id))
+        return favouritesText.split(separator: "\n").map(String.init).filter(known.contains)
+    }
+
+    private func toggleFavourite(_ id: String) {
+        var list = favourites
+        if let index = list.firstIndex(of: id) { list.remove(at: index) } else { list.append(id) }
+        favouritesText = list.joined(separator: "\n")
+    }
 
     private let columns = Array(repeating: GridItem(.fixed(64), spacing: 4), count: 4)
 
@@ -367,28 +380,18 @@ private struct SoundboardCard: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
             ScrollView {
+                let starred = favourites
+                let byID = Dictionary(uniqueKeysWithValues: Soundboard.clips.map { ($0.id, $0) })
                 LazyVGrid(columns: columns, spacing: 4) {
-                    ForEach(Soundboard.clips) { clip in
-                        Button { team.playSoundboard(clip.id) } label: {
-                            VStack(spacing: 2) {
-                                Text(Soundboard.emoji(for: clip.title))
-                                    .font(.system(size: 22))
-                                Text(clip.title)
-                                    .font(.system(size: 9))
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.center)
-                                    .foregroundStyle(.primary)
-                            }
-                            .frame(width: 64, height: 58)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(Color.primary.opacity(hovered == clip.id ? 0.12 : 0.05))
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PressableStyle())
-                        .onHover { hovered = $0 ? clip.id : (hovered == clip.id ? nil : hovered) }
-                        .help(clip.title)
+                    if !starred.isEmpty {
+                        Section {
+                            ForEach(starred.compactMap { byID[$0] }) { tile($0, isFavourite: true) }
+                        } header: { gridHeader("Favourites") }
+                        Section {
+                            ForEach(Soundboard.clips.filter { !starred.contains($0.id) }) { tile($0, isFavourite: false) }
+                        } header: { gridHeader("All Sounds") }
+                    } else {
+                        ForEach(Soundboard.clips) { tile($0, isFavourite: false) }
                     }
                 }
             }
@@ -403,6 +406,57 @@ private struct SoundboardCard: View {
         )
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.1)))
         .onExitCommand { team.isShowingSoundboard = false }
+    }
+
+    private func gridHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(0.5)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+            .padding(.leading, 2)
+    }
+
+    /// One sound: click to play. The star (top right) adds or removes a favourite.
+    private func tile(_ clip: Ringtone.Choice, isFavourite: Bool) -> some View {
+        Button { team.playSoundboard(clip.id) } label: {
+            VStack(spacing: 2) {
+                Text(Soundboard.emoji(for: clip.title))
+                    .font(.system(size: 22))
+                Text(clip.title)
+                    .font(.system(size: 9))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.primary)
+            }
+            .frame(width: 64, height: 58)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.primary.opacity(hovered == clip.id ? 0.12 : 0.05))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .overlay(alignment: .topTrailing) {
+            if isFavourite || hovered == clip.id {
+                Button { toggleFavourite(clip.id) } label: {
+                    Image(systemName: isFavourite ? "star.fill" : "star")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(isFavourite ? Color.yellow : Color.secondary)
+                        .frame(width: 16, height: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableStyle())
+                .help(isFavourite ? "Remove from favourites" : "Add to favourites")
+                .padding(2)
+            }
+        }
+        .onHover { hovered = $0 ? clip.id : (hovered == clip.id ? nil : hovered) }
+        .contextMenu {
+            Button(isFavourite ? "Remove from Favourites" : "Add to Favourites") { toggleFavourite(clip.id) }
+        }
+        .help(clip.title)
     }
 }
 

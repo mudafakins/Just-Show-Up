@@ -43,6 +43,11 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .menu .sb-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; max-height: 260px; overflow-y: auto; padding: 2px; }
 .menu .sb-grid button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 58px; padding: 4px; text-align: center; font-size: 10px; line-height: 1.15; background: var(--hover); border-radius: 8px; overflow: hidden; }
 .menu .sb-grid button span { font-size: 22px; line-height: 1; }
+.menu .sb-grid button { position: relative; }
+.menu .sb-grid .fav { position: absolute; top: 2px; right: 4px; font-style: normal; font-size: 11px; color: var(--muted); opacity: 0; cursor: pointer; }
+.menu .sb-grid button:hover .fav, .menu .sb-grid .fav.on { opacity: 1; }
+.menu .sb-grid .fav.on { color: #ffcc00; }
+.menu .sb-grid .sb-section { grid-column: 1 / -1; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding: 4px 2px 0; }
 .dnd.on { color: #af52de; }
 .dnd.on path { fill: currentColor; }
 .gear.has-update::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 4px; background: #ff3b30; }
