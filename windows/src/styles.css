@@ -46,7 +46,7 @@ input:focus { border: 2px solid var(--accent); padding: 0 11px; }
 .menu .sb-grid button { position: relative; }
 .menu .sb-grid .fav { position: absolute; top: 2px; right: 4px; font-style: normal; font-size: 11px; color: var(--muted); opacity: 0; cursor: pointer; }
 .menu .sb-grid button:hover .fav, .menu .sb-grid .fav.on { opacity: 1; }
-.menu .sb-grid .fav.on { color: #ffcc00; }
+.menu .sb-grid .fav.on { color: #ff2d55; }
 .menu .sb-grid .sb-section { grid-column: 1 / -1; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); padding: 4px 2px 0; }
 .dnd.on { color: #af52de; }
 .dnd.on path { fill: currentColor; }

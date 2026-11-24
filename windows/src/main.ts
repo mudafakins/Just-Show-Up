@@ -1172,7 +1172,7 @@ function soundboardMenu(anchor: HTMLElement) {
   menuEl!.classList.add("soundboard");
 }
 
-// Favourite sounds, in the order they were starred.
+// Favourite sounds, in the order they were hearted.
 const FAVOURITES_KEY = "soundboardFavourites";
 function favourites(): string[] {
   try {
@@ -1198,14 +1198,14 @@ function toggleFavourite(id: string) {
   }
 }
 
-/** Favourites first (in the order they were starred), then everything else. */
+/** Favourites first (in the order they were hearted), then everything else. */
 function soundboardGrid() {
   const starred = favourites();
   const tile = (id: string, favourite: boolean) => {
     const c = CLIPS.find((x) => x.id === id)!;
     return `<button data-action="sb" data-id="${esc(c.id)}" title="${esc(c.title)}"><span>${clipEmoji(c.title)}</span>${esc(c.title)}<i class="fav${
       favourite ? " on" : ""
-    }" data-action="sb-fav" data-id="${esc(c.id)}" title="${favourite ? "Remove from favourites" : "Add to favourites"}">${favourite ? "★" : "☆"}</i></button>`;
+    }" data-action="sb-fav" data-id="${esc(c.id)}" title="${favourite ? "Remove from favourites" : "Add to favourites"}">${favourite ? "♥" : "♡"}</i></button>`;
   };
   const rest = CLIPS.filter((c) => !starred.includes(c.id)).map((c) => tile(c.id, false)).join("");
   if (!starred.length) return rest;

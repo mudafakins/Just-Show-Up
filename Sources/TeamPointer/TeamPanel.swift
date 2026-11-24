@@ -341,7 +341,7 @@ private struct Header: View {
 private struct SoundboardCard: View {
     @EnvironmentObject private var team: TeamStore
     @State private var hovered: String?
-    /// Favourite sounds, in the order they were starred (one id per line).
+    /// Favourite sounds, in the order they were hearted (one id per line).
     @AppStorage("soundboardFavourites") private var favouritesText = ""
 
     private var favourites: [String] {
@@ -418,7 +418,7 @@ private struct SoundboardCard: View {
             .padding(.leading, 2)
     }
 
-    /// One sound: click to play. The star (top right) adds or removes a favourite.
+    /// One sound: click to play. The heart (top right) adds or removes a favourite.
     private func tile(_ clip: Ringtone.Choice, isFavourite: Bool) -> some View {
         Button { team.playSoundboard(clip.id) } label: {
             VStack(spacing: 2) {
@@ -441,9 +441,9 @@ private struct SoundboardCard: View {
         .overlay(alignment: .topTrailing) {
             if isFavourite || hovered == clip.id {
                 Button { toggleFavourite(clip.id) } label: {
-                    Image(systemName: isFavourite ? "star.fill" : "star")
+                    Image(systemName: isFavourite ? "heart.fill" : "heart")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(isFavourite ? Color.yellow : Color.secondary)
+                        .foregroundStyle(isFavourite ? Color.pink : Color.secondary)
                         .frame(width: 16, height: 16)
                         .contentShape(Rectangle())
                 }
