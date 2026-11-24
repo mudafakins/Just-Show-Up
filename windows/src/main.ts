@@ -647,7 +647,12 @@ async function startSharing() {
     await room.localParticipant.setScreenShareEnabled(
       true,
       {
-        audio: false,
+        // The computer's sound goes along with the screen (Windows offers a "Share
+        // system audio" switch in the picker, on by default here). restrictOwnAudio
+        // leaves out this app's own sound (the call), so nobody hears an echo; the
+        // rest is left untouched, since it's music or video, not a voice.
+        audio: { restrictOwnAudio: true, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        systemAudio: "include",
         resolution: { width: 2560, height: 1440, frameRate: 15 },
         contentHint: "text",
         video: { displaySurface: "monitor" },

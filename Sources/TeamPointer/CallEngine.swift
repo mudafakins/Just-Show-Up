@@ -81,13 +81,27 @@ final class CallEngine {
     }
 
 
+    /// Whether I'm muted. While I share my screen, my computer's sound travels in the
+    /// microphone channel, so muting then turns down only my voice, not the channel.
+    private var isMuted = false
+
     func setMuted(_ muted: Bool) async {
-        _ = try? await room?.localParticipant.setMicrophone(enabled: !muted)
+        isMuted = muted
+        if sharePublication != nil {
+            AudioManager.shared.mixer.micVolume = muted ? 0 : 1
+            _ = try? await room?.localParticipant.setMicrophone(enabled: true)
+        } else {
+            AudioManager.shared.mixer.micVolume = 1
+            _ = try? await room?.localParticipant.setMicrophone(enabled: !muted)
+        }
     }
 
     func disconnect() async {
         let old = room
         room = nil
+        // A new room starts unmuted (the panel re-applies mute if I joined muted).
+        isMuted = false
+        AudioManager.shared.mixer.micVolume = 1
         relay = nil
         cleanUpSharing()
         await old?.disconnect()
@@ -240,7 +254,9 @@ final class CallEngine {
         let track = await LocalVideoTrack.createMacOSScreenShareTrack(
             source: share.source,
             // 15 fps is plenty for screens and keeps text sharp at a modest bitrate.
-            options: ScreenShareCaptureOptions(dimensions: share.dimensions, fps: 15, showCursor: true)
+            // appAudio: what's playing on my computer goes along with the screen (this
+            // app's own sound, i.e. the call, is left out so nobody hears an echo).
+            options: ScreenShareCaptureOptions(dimensions: share.dimensions, fps: 15, showCursor: true, appAudio: true)
         )
         sharePublication = try await room.localParticipant.publish(
             videoTrack: track,
@@ -254,6 +270,9 @@ final class CallEngine {
                 degradationPreference: .maintainResolution
             )
         )
+        // The computer's sound rides in the microphone channel: keep it open while
+        // sharing, and if I'm muted, silence only my voice.
+        await setMuted(isMuted)
 
         // The see-through layer on my own screen where teammates' ink and cursors appear.
         if let myID {
@@ -278,6 +297,8 @@ final class CallEngine {
         sharePublication = nil
         closeOverlay()
         try? await room?.localParticipant.unpublish(publication: publication)
+        // Back to a normal mute now the computer's sound isn't being shared.
+        await setMuted(isMuted)
         onLocalShareStopped?()
     }
 
