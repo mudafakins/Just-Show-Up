@@ -104,8 +104,19 @@ enum RingSelfTest {
             await wait(6)
             check(team.incomingRing?.callID == callD, "brief dropout keeps ringing")
             await channel.untrack()
-            await wait(7)
+            await wait(9)
             check(team.incomingRing == nil, "caller gone for good stops ringing")
+
+            // After a reconnect (as on wake from sleep), calls still arrive.
+            await team.debugReconnect()
+            await wait(2)
+            received = []
+            let callR = UUID().uuidString
+            await say(.ring, room: 2, callID: callR)
+            await wait(1.5)
+            check(team.incomingRing?.callID == callR && count(.ringing) >= 1, "calls arrive after reconnecting")
+            await say(.cancel, room: 2, callID: callR)
+            await wait(1)
 
             listener.cancel()
             await client.realtimeV2.removeChannel(channel)

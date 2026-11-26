@@ -1,5 +1,6 @@
 import SwiftUI
 import Supabase
+import Network
 
 /// The team's voice rooms. Everyone sees who is in which; joining needs no ringing.
 enum Rooms {
@@ -122,6 +123,10 @@ final class TeamStore: ObservableObject {
     private var endedCalls: Set<String> = []
     /// Waits to see whether the person calling me is really gone, not just reconnecting.
     private var callerGoneCheck: Task<Void, Never>?
+    /// Notices network changes, after which the team channel may be quietly dead.
+    private let pathMonitor = NWPathMonitor()
+    private var networkKey: String?
+    private var isReconnecting = false
     private let engine = CallEngine()
 
     init() {
@@ -193,6 +198,8 @@ final class TeamStore: ObservableObject {
             Task { await self.updatePresence() }
         }
 
+        watchConnection()
+
         Task { [weak self] in
             for await (event, session) in client.auth.authStateChanges {
                 guard let self else { return }
@@ -241,6 +248,48 @@ final class TeamStore: ObservableObject {
         } catch {
             errorMessage = friendlyMessage(error)
         }
+    }
+
+    // MARK: Staying connected
+    //
+    // After sleep or a network change the team channel's connection can be dead
+    // without the app knowing, so calls and presence stop arriving. Reconnect then.
+
+    private func watchConnection() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.reconnectPresence() }
+        }
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let key = path.status == .satisfied
+                ? path.availableInterfaces.map(\.name).joined(separator: ",") : "offline"
+            Task { @MainActor in self?.networkChanged(to: key) }
+        }
+        pathMonitor.start(queue: .main)
+    }
+
+    private func networkChanged(to key: String) {
+        defer { networkKey = key }
+        // The first report is the network as it is now, not a change.
+        guard let previous = networkKey, previous != key, key != "offline" else { return }
+        Task { await reconnectPresence() }
+    }
+
+    private func reconnectPresence() async {
+        guard presenceChannel != nil, !isReconnecting, let client else { return }
+        isReconnecting = true
+        defer { isReconnecting = false }
+        // Give the new network a moment to come up.
+        try? await Task.sleep(for: .seconds(2))
+        guard presenceChannel != nil else { return }
+        await leavePresence()
+        client.realtimeV2.disconnect()
+        // The socket closes in the background; joining before it has would leave
+        // the old connection delivering every message a second time.
+        try? await Task.sleep(for: .seconds(1))
+        await joinPresence()
+        await updatePresence()
     }
 
     private func enterTeamIfMember() async {
@@ -875,5 +924,7 @@ extension Teammate {
 extension TeamStore {
     /// For RingSelfTest: the team channel's name.
     var debugTeamTopic: String? { teamID.map { "team:\($0.uuidString.lowercased())" } }
+    /// For RingSelfTest: what a wake from sleep does.
+    func debugReconnect() async { await reconnectPresence() }
 }
 #endif
