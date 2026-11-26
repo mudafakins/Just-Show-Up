@@ -1503,6 +1503,34 @@ void listen("panel-shown", () => {
 // a Web Lock is never frozen, so hold one for as long as the app runs.
 void navigator.locks?.request("just-show-up-stay-awake", () => new Promise<never>(() => {}));
 
+// After sleep or a network change the team channel's connection can be dead without
+// the app knowing, so calls and presence stop arriving. Reconnect then. Sleep shows
+// up as a long gap between ticks of a timer (a hidden page's timers can run up to a
+// minute late, so only a much longer gap counts).
+let reconnecting = false;
+async function reconnectPresence() {
+  if (!channel || !sb || reconnecting) return;
+  reconnecting = true;
+  try {
+    await new Promise((r) => setTimeout(r, 2_000)); // let the network come up
+    if (!channel) return;
+    await leavePresence();
+    sb.realtime.disconnect();
+    await new Promise((r) => setTimeout(r, 1_000));
+    await joinPresence();
+    render();
+  } finally {
+    reconnecting = false;
+  }
+}
+window.addEventListener("online", () => void reconnectPresence());
+let lastTick = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  if (now - lastTick > 150_000) void reconnectPresence();
+  lastTick = now;
+}, 15_000);
+
 // App style (Settings → App Style): the small panel by the tray icon, or a normal
 // window on the taskbar.
 const STYLE_KEY = "appStyle";
