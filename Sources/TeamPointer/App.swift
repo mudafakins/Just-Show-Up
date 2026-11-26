@@ -79,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return team.call == nil && team.incomingRing == nil && !team.isSharingScreen
         }
         updater.start()
+        #if DEBUG
+        RingSelfTest.runIfAsked(team: team)
+        #endif
     }
 
     /// The menu bar always shows the app's mark, whatever the app is doing.
