@@ -51,12 +51,14 @@ interface CallState {
 
 /** Same JSON as the Mac app's CallSignal. */
 interface CallSignal {
-  kind: "ring" | "cancel" | "decline" | "busy";
+  kind: "ring" | "cancel" | "decline" | "busy" | "ringing";
   from: string;
   to: string;
   room: string;
   name: string;
   roomNumber?: number | null;
+  /** One id per call, so the caller's repeats don't ring twice (absent from older builds). */
+  callID?: string | null;
 }
 
 type Phase = "config" | "loading" | "welcome" | "team";
@@ -76,7 +78,7 @@ const S = {
   online: new Set<string>(),
   roomMembers: new Map<string, number>(),
   ringing: new Map<string, number>(),
-  incoming: undefined as { from: string; fromName: string; roomNumber: number } | undefined,
+  incoming: undefined as { from: string; fromName: string; roomNumber: number; callID?: string } | undefined,
   sharing: false,
   drawing: false,
   sharingUsers: new Map<string, RemoteTrack>(),
@@ -256,7 +258,18 @@ async function joinPresence() {
     S.roomMembers = rooms;
     // Someone I'm calling arrived in the room I called them to.
     for (const [id, n] of S.ringing) if (rooms.get(id) === n) S.ringing.delete(id);
-    if (S.incoming && !online.has(S.incoming.from)) stopIncomingRing();
+    // Only once they've been gone a few seconds: calling me moves them into a room,
+    // which briefly swaps their connection and must not silence my ring.
+    const ring = S.incoming;
+    if (ring && !online.has(ring.from) && callerGoneTimer === undefined) {
+      callerGoneTimer = window.setTimeout(() => {
+        callerGoneTimer = undefined;
+        if (S.incoming === ring && !S.online.has(ring.from)) {
+          stopIncomingRing();
+          render();
+        }
+      }, 5_000);
+    }
     if (unknown) void reloadTeam(); // a new teammate just joined
     render();
   });
@@ -289,46 +302,79 @@ async function updatePresence() {
   await channel.track({ user_id: S.me.id, room: roomNumber });
 }
 
-async function send(kind: CallSignal["kind"], to: string, roomNumber: number | null) {
+async function send(kind: CallSignal["kind"], to: string, roomNumber: number | null, callID?: string | null) {
   if (!channel || !S.me) return;
-  const signal: CallSignal = { kind, from: S.me.id, to, room: "", name: S.me.name, roomNumber };
+  const signal: CallSignal = { kind, from: S.me.id, to, room: "", name: S.me.name, roomNumber, callID: callID ?? null };
   await channel.send({ type: "broadcast", event: "call", payload: signal });
 }
+
+/** The call id of each call I'm making, by teammate. */
+const outgoingCalls = new Map<string, string>();
+/** My calls whose ring reached the other side. */
+const acknowledgedCalls = new Set<string>();
+/** Calls to me that are over: a late repeat of their ring must not ring again. */
+const endedCalls = new Set<string>();
+/** Waits to see whether the person calling me is really gone, not just reconnecting. */
+let callerGoneTimer: number | undefined;
+
+const RING_REPEAT_MS = 3_000;
+const UNREACHED_MS = 8_000;
+const UNANSWERED_MS = 30_000;
 
 async function receive(signal: CallSignal) {
   if (!S.me || norm(signal.to) !== S.me.id) return;
   const from = norm(signal.from);
   const name = S.teammates.find((t) => t.id === from)?.name ?? signal.name;
+  const callID = signal.callID ?? undefined;
 
   switch (signal.kind) {
     case "ring": {
       const n = signal.roomNumber;
       if (!n || !ROOMS.includes(n)) return;
       if (S.call?.number === n) return; // already in the room they're calling me to
-      if (S.doNotDisturb) return void send("busy", from, n);
-      S.incoming = { from, fromName: name, roomNumber: n };
+      if (callID && endedCalls.has(callID)) return; // a late repeat of a call that's over
+      if (S.doNotDisturb) return void send("busy", from, n, callID);
+      // A repeat of the call that's ringing now: just say it's ringing.
+      const now = S.incoming;
+      if (now && now.from === from && now.roomNumber === n && now.callID === callID) {
+        return void send("ringing", from, n, callID);
+      }
+      if (now?.callID) endedCalls.add(now.callID);
+      clearCallerGone();
+      const ring = { from, fromName: name, roomNumber: n, callID };
+      S.incoming = ring;
       startRingtone();
       void invoke("show_panel");
       render();
+      void send("ringing", from, n, callID);
       // Stop by itself if the caller's cancel never arrives.
       setTimeout(() => {
-        if (S.incoming?.from !== from) return;
+        if (S.incoming !== ring) return;
         stopIncomingRing();
         S.notice = `Missed call from ${name}.`;
         render();
       }, 40_000);
       break;
     }
-    case "cancel":
-      if (S.incoming?.from !== from) return;
+    case "cancel": {
+      if (callID) endedCalls.add(callID);
+      const ring = S.incoming;
+      if (!ring || ring.from !== from) return;
+      if (callID && ring.callID && ring.callID !== callID) return;
       stopIncomingRing();
       S.notice = `Missed call from ${name}.`;
       render();
       break;
+    }
+    case "ringing":
+      if (callID && outgoingCalls.get(from) === callID) acknowledgedCalls.add(callID);
+      break;
     case "decline":
     case "busy":
       if (!S.ringing.has(from)) return;
+      if (callID && outgoingCalls.has(from) && outgoingCalls.get(from) !== callID) return;
       S.ringing.delete(from);
+      outgoingCalls.delete(from);
       S.notice = signal.kind === "busy" ? `${name} is on Do Not Disturb.` : `${name} declined.`;
       render();
       break;
@@ -337,33 +383,61 @@ async function receive(signal: CallSignal) {
 
 // ---------------------------------------------------------------- calling
 
+/**
+ * Calls a teammate to a room. The ring repeats every few seconds until their app
+ * says it's ringing: one message can be lost on a connection that went stale (after
+ * sleep or a network change). With no reply in 8 seconds, says they couldn't be reached.
+ */
 function ring(t: Teammate, n: number) {
   if (!isOnline(t) || roomOf(t) === n) return;
   if (S.call?.number !== n) joinRoom(n);
+  const callID = crypto.randomUUID();
   S.ringing.set(t.id, n);
+  outgoingCalls.set(t.id, callID);
   S.notice = undefined;
   render();
-  void send("ring", t.id, n);
-  setTimeout(() => {
-    if (S.ringing.get(t.id) !== n) return;
-    S.ringing.delete(t.id);
-    void send("cancel", t.id, n);
-    S.notice = `${t.name} didn't answer.`;
-    render();
-  }, 30_000);
+  const started = Date.now();
+  let lastSent = 0;
+  const tick = () => {
+    if (S.ringing.get(t.id) !== n || outgoingCalls.get(t.id) !== callID) return endOutgoingCall(t.id, callID);
+    const elapsed = Date.now() - started;
+    const reached = acknowledgedCalls.has(callID);
+    if (elapsed >= UNANSWERED_MS || (!reached && elapsed >= UNREACHED_MS)) {
+      S.ringing.delete(t.id);
+      endOutgoingCall(t.id, callID);
+      void send("cancel", t.id, n, callID);
+      S.notice = reached ? `${t.name} didn't answer.` : `Couldn't reach ${t.name}. They may be offline or asleep.`;
+      render();
+      return;
+    }
+    if (!reached && Date.now() - lastSent >= RING_REPEAT_MS) {
+      lastSent = Date.now();
+      void send("ring", t.id, n, callID);
+    }
+    setTimeout(tick, 250);
+  };
+  tick();
+}
+
+function endOutgoingCall(id: string, callID: string) {
+  if (outgoingCalls.get(id) === callID) outgoingCalls.delete(id);
+  acknowledgedCalls.delete(callID);
 }
 
 function stopCalling(t: Teammate) {
   const n = S.ringing.get(t.id);
   if (n === undefined) return;
   S.ringing.delete(t.id);
-  void send("cancel", t.id, n);
+  const callID = outgoingCalls.get(t.id);
+  outgoingCalls.delete(t.id);
+  void send("cancel", t.id, n, callID);
   render();
 }
 
 function cancelAllCalls() {
-  for (const [id, n] of S.ringing) void send("cancel", id, n);
+  for (const [id, n] of S.ringing) void send("cancel", id, n, outgoingCalls.get(id));
   S.ringing.clear();
+  outgoingCalls.clear();
 }
 
 function acceptRing() {
@@ -377,13 +451,20 @@ function declineRing() {
   const ring = S.incoming;
   if (!ring) return;
   stopIncomingRing();
-  void send("decline", ring.from, ring.roomNumber);
+  void send("decline", ring.from, ring.roomNumber, ring.callID);
   render();
 }
 
 function stopIncomingRing() {
+  if (S.incoming?.callID) endedCalls.add(S.incoming.callID);
   S.incoming = undefined;
+  clearCallerGone();
   stopRingtone();
+}
+
+function clearCallerGone() {
+  if (callerGoneTimer !== undefined) window.clearTimeout(callerGoneTimer);
+  callerGoneTimer = undefined;
 }
 
 // ---------------------------------------------------------------- rooms (LiveKit)
