@@ -94,6 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         updater.start()
         #if DEBUG
+        runStyleSelfTestIfAsked()
+        #endif
+        #if DEBUG
         RingSelfTest.runIfAsked(team: team)
         #endif
     }
@@ -216,6 +219,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown { popover.performClose(nil) }
     }
 }
+
+#if DEBUG
+extension AppDelegate {
+    /// `--style-selftest`: switches style from inside the app (as Settings does),
+    /// closes and reopens the window, switches back, prints the results and quits.
+    @MainActor func runStyleSelfTestIfAsked() {
+        guard CommandLine.arguments.contains("--style-selftest") else { return }
+        Task { @MainActor in
+            @MainActor func state(_ label: String) {
+                let visible = window?.isVisible == true
+                let policy = NSApp.activationPolicy() == .regular ? "dock" : "no-dock"
+                print("STYLE-SELFTEST \(label): window=\(visible ? "shown" : "hidden") \(policy) popoverHasPanel=\(popover.contentViewController != nil)")
+            }
+            try? await Task.sleep(for: .seconds(2))
+            state("start (menu bar)")
+            UserDefaults.standard.set(AppStyle.window.rawValue, forKey: AppStyle.key)
+            try? await Task.sleep(for: .seconds(1))
+            state("switched to window")
+            window?.performClose(nil)
+            try? await Task.sleep(for: .seconds(1))
+            state("after red close button")
+            _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+            try? await Task.sleep(for: .seconds(1))
+            state("after Dock click")
+            showForRing()
+            try? await Task.sleep(for: .seconds(1))
+            state("after incoming call")
+            UserDefaults.standard.set(AppStyle.menuBar.rawValue, forKey: AppStyle.key)
+            try? await Task.sleep(for: .seconds(1))
+            state("switched back to menu bar")
+            exit(0)
+        }
+    }
+}
+#endif
 
 extension AppDelegate: NSWindowDelegate {
     /// Closing the window hides it; the app keeps running so calls still ring.
