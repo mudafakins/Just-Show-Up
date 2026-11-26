@@ -420,6 +420,10 @@ private final class ShareViewer {
 
         let video = VideoView(frame: frame)
         video.layoutMode = .fit
+        // Apple's display layer reads the video's colour range correctly. The default
+        // Metal renderer treats video-range frames as full range, so blacks showed as
+        // grey and colours looked faded (measured with --color-selftest).
+        video.renderMode = .sampleBuffer
         video.track = track
         video.autoresizingMask = [.width, .height]
         container.addSubview(video)
