@@ -35,6 +35,9 @@ struct AppState {
     /// The tray icon's last known position, in physical pixels: x, y, width, height.
     tray: Mutex<Option<(f64, f64, f64, f64)>>,
     panel_height: Mutex<f64>,
+    /// Window style (chosen in Settings): a normal window on the taskbar instead of
+    /// the small panel by the tray icon.
+    window_style: Mutex<bool>,
 }
 
 fn builder<'a>(app: &'a AppHandle, label: &'a str, page: &str) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
@@ -80,9 +83,63 @@ fn place_panel(app: &AppHandle, window: &WebviewWindow) {
     let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
+fn is_window_style(app: &AppHandle) -> bool {
+    *app.state::<AppState>().window_style.lock().unwrap()
+}
+
+/// Where the window was last left, in physical pixels (window style only).
+fn position_file(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("window-position.txt"))
+}
+
+fn save_position(app: &AppHandle, x: i32, y: i32) {
+    if let Some(path) = position_file(app) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap());
+        let _ = std::fs::write(path, format!("{x} {y}"));
+    }
+}
+
+/// Puts the window back where it was left, if that spot is still on a screen.
+fn restore_position(app: &AppHandle, window: &WebviewWindow) {
+    let saved = position_file(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| {
+            let mut parts = t.split_whitespace().map(|n| n.parse::<i32>().ok());
+            Some((parts.next()??, parts.next()??))
+        });
+    let on_screen = |x: i32, y: i32| {
+        window.available_monitors().unwrap_or_default().iter().any(|m| {
+            let (p, s) = (m.position(), m.size());
+            x >= p.x - 50 && y >= p.y - 10 && x < p.x + s.width as i32 - 100 && y < p.y + s.height as i32 - 100
+        })
+    };
+    match saved {
+        Some((x, y)) if on_screen(x, y) => {
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+        }
+        _ => {
+            let _ = window.center();
+        }
+    }
+}
+
+/// Dresses the main window as the small tray panel or as a normal window.
+fn apply_panel_look(app: &AppHandle, window: &WebviewWindow) {
+    let windowed = is_window_style(app);
+    let _ = window.set_title("Just Show Up!");
+    let _ = window.set_decorations(windowed);
+    let _ = window.set_resizable(false);
+    let _ = window.set_skip_taskbar(!windowed);
+    let _ = window.set_always_on_top(!windowed);
+    if windowed {
+        let height = *app.state::<AppState>().panel_height.lock().unwrap();
+        let _ = window.set_size(LogicalSize::new(PANEL_WIDTH, height.max(200.0)));
+    }
+}
+
 fn show_panel_window(app: &AppHandle) {
     let Some(window) = main_window(app) else { return };
-    if *app.state::<AppState>().viewer.lock().unwrap() {
+    if *app.state::<AppState>().viewer.lock().unwrap() || is_window_style(app) {
         let _ = window.show();
         let _ = window.set_focus();
         return;
@@ -130,8 +187,44 @@ fn set_panel_height(app: AppHandle, height: f64) {
         return;
     }
     if let Some(window) = main_window(&app) {
-        if window.is_visible().unwrap_or(false) {
+        if is_window_style(&app) {
+            // A normal window keeps its place and only changes height.
+            let _ = window.set_size(LogicalSize::new(PANEL_WIDTH, height.clamp(160.0, 900.0)));
+        } else if window.is_visible().unwrap_or(false) {
             place_panel(&app, &window);
+        }
+    }
+}
+
+/// Switches between the tray panel and a normal window (Settings → App Style).
+#[tauri::command]
+fn set_app_style(app: AppHandle, window_style: bool, show: bool) {
+    let state = app.state::<AppState>();
+    let changed = *state.window_style.lock().unwrap() != window_style;
+    *state.window_style.lock().unwrap() = window_style;
+    if *state.viewer.lock().unwrap() {
+        return; // applied when the screen viewer closes
+    }
+    let Some(window) = main_window(&app) else { return };
+    apply_panel_look(&app, &window);
+    if window_style && (changed || show) {
+        restore_position(&app, &window);
+    }
+    if show {
+        show_panel_window(&app);
+    } else if changed && !window_style {
+        let _ = window.hide();
+    }
+}
+
+/// Someone is calling me: bring the panel up, and in window style also flash the
+/// taskbar button until I come to the app.
+#[tauri::command]
+fn alert_ring(app: AppHandle) {
+    show_panel_window(&app);
+    if is_window_style(&app) {
+        if let Some(window) = main_window(&app) {
+            let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
         }
     }
 }
@@ -157,12 +250,12 @@ fn enter_viewer(app: AppHandle, title: String) {
 fn enter_panel(app: AppHandle, show: bool) {
     let Some(window) = main_window(&app) else { return };
     *app.state::<AppState>().viewer.lock().unwrap() = false;
-    let _ = window.set_title("Just Show Up!");
-    let _ = window.set_decorations(false);
-    let _ = window.set_resizable(false);
-    let _ = window.set_skip_taskbar(true);
-    let _ = window.set_always_on_top(true);
-    if show {
+    apply_panel_look(&app, &window);
+    if is_window_style(&app) {
+        // Back to my normal window, where I left it.
+        restore_position(&app, &window);
+        show_panel_window(&app);
+    } else if show {
         show_panel_window(&app);
     } else {
         let _ = window.hide();
@@ -299,6 +392,8 @@ fn main() {
             show_panel,
             hide_panel,
             set_panel_height,
+            set_app_style,
+            alert_ring,
             enter_viewer,
             enter_panel,
             open_overlay,
@@ -365,15 +460,32 @@ fn main() {
             match event {
                 // Like a menu: the panel goes away when you click elsewhere.
                 WindowEvent::Focused(false) => {
-                    if !*state.viewer.lock().unwrap() && !*state.picking.lock().unwrap() {
+                    if !*state.viewer.lock().unwrap()
+                        && !*state.picking.lock().unwrap()
+                        && !*state.window_style.lock().unwrap()
+                    {
                         *state.hidden_at.lock().unwrap() = Some(Instant::now());
                         let _ = window.hide();
                     }
                 }
-                // Closing the screen viewer returns to the panel instead of quitting.
+                // Closing the screen viewer returns to the panel instead of quitting;
+                // closing the normal window hides it (calls still ring; the tray icon
+                // brings it back).
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    let _ = app.emit("viewer-closed", ());
+                    if *state.viewer.lock().unwrap() {
+                        let _ = app.emit("viewer-closed", ());
+                    } else {
+                        let _ = window.hide();
+                    }
+                }
+                WindowEvent::Moved(position) => {
+                    if *state.window_style.lock().unwrap()
+                        && !*state.viewer.lock().unwrap()
+                        && window.is_visible().unwrap_or(false)
+                    {
+                        save_position(app, position.x, position.y);
+                    }
                 }
                 _ => {}
             }

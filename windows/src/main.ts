@@ -344,7 +344,7 @@ async function receive(signal: CallSignal) {
       const ring = { from, fromName: name, roomNumber: n, callID };
       S.incoming = ring;
       startRingtone();
-      void invoke("show_panel");
+      void invoke("alert_ring");
       render();
       void send("ringing", from, n, callID);
       // Stop by itself if the caller's cancel never arrives.
@@ -1326,7 +1326,10 @@ function gearMenu(anchor: HTMLElement) {
      ${S.me?.avatarPath ? '<button data-action="remove-photo">Remove Photo</button>' : ""}<hr />
      <button data-action="keep-ink">${check(keepInk.get())}Keep Drawings Until Cleared</button>
      <button data-action="sounds">${check(sounds.enabled())}Sounds</button>
-     <button data-action="ringtone-list">Ringtone: ${esc(ringtone.get().title)}…</button><hr />
+     <button data-action="ringtone-list">Ringtone: ${esc(ringtone.get().title)}…</button>
+     <div class="label">App Style</div>
+     <button data-action="style-tray">${check(!windowStyle())}Tray Panel</button>
+     <button data-action="style-window">${check(windowStyle())}Window and Taskbar</button><hr />
      <button data-action="copy-code">Copy Team Code</button>
      <button data-action="new-code">New Team Code</button>
      <button data-action="leave-team">Leave Team</button><hr />
@@ -1442,6 +1445,11 @@ document.addEventListener("click", (event) => {
       ringtoneMenu(scroll);
       return;
     }
+    case "style-tray":
+    case "style-window":
+      setWindowStyle(target.dataset.action === "style-window");
+      closeMenu();
+      return;
     case "sounds":
       sounds.setEnabled(!sounds.enabled());
       closeMenu();
@@ -1494,6 +1502,19 @@ void listen("panel-shown", () => {
 // and soundboard clips. Voice kept working, which hid the problem. A page that holds
 // a Web Lock is never frozen, so hold one for as long as the app runs.
 void navigator.locks?.request("just-show-up-stay-awake", () => new Promise<never>(() => {}));
+
+// App style (Settings → App Style): the small panel by the tray icon, or a normal
+// window on the taskbar.
+const STYLE_KEY = "appStyle";
+function windowStyle() {
+  return localStorage.getItem(STYLE_KEY) === "window";
+}
+function setWindowStyle(on: boolean) {
+  localStorage.setItem(STYLE_KEY, on ? "window" : "tray");
+  void invoke("set_app_style", { windowStyle: on, show: on });
+}
+// Window style opens the window at launch; the tray style stays hidden until clicked.
+void invoke("set_app_style", { windowStyle: windowStyle(), show: windowStyle() });
 
 void start();
 
