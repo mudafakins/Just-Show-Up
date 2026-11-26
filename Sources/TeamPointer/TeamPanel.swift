@@ -240,6 +240,7 @@ private struct Header: View {
     @AppStorage(Sounds.enabledKey) private var playSounds = true
     @AppStorage(Ringtone.styleKey) private var ringtone = ""
     @AppStorage(Updater.autoKey) private var autoUpdate = true
+    @AppStorage(AppStyle.key) private var appStyle = AppStyle.menuBar.rawValue
 
     private var ringtoneTitle: String {
         _ = ringtone  // redraw when it changes
@@ -267,6 +268,9 @@ private struct Header: View {
                     Button("Ringtone: \(ringtoneTitle)…") {
                         team.isShowingSoundboard = false
                         team.isChoosingRingtone = true
+                    }
+                    Picker("App Style", selection: $appStyle) {
+                        ForEach(AppStyle.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
                     }
                     Divider()
                     Button("Copy Team Code") { team.copyTeamCode() }

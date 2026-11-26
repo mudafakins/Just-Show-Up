@@ -52,6 +52,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var outsideClickMonitor: Any?
+    /// The panel, shown in the popover (menu bar style) or the window (window style).
+    private var host: NSHostingController<AnyView>!
+    /// The normal window used in window style.
+    private var window: NSWindow?
+    private var style = AppStyle.current
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
@@ -62,16 +67,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem.button?.action = #selector(togglePopover)
         updateIcon()
 
-        let host = NSHostingController(rootView: TeamPanel().environmentObject(team).environmentObject(updater))
-        // Let the popover grow and shrink with the panel's content.
+        host = NSHostingController(rootView: AnyView(TeamPanel().environmentObject(team).environmentObject(updater)))
+        // Let the popover (or window) grow and shrink with the panel's content.
         host.sizingOptions = .preferredContentSize
-        popover.contentViewController = host
         popover.behavior = .transient
         popover.delegate = self
         popover.animates = true
+        applyStyle(showWindow: true)
+
+        // Switch style as soon as it changes in Settings.
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, AppStyle.current != self.style else { return }
+                self.style = AppStyle.current
+                self.applyStyle(showWindow: true)
+            }
+        }
 
         // Being rung opens the panel so the ring is right there.
-        team.onRing = { [weak self] in self?.showPopover() }
+        team.onRing = { [weak self] in self?.showForRing() }
 
         updater.onMessage = { [weak self] message in self?.team.notice = message }
         updater.isIdle = { [weak self] in
@@ -94,7 +108,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         button.setAccessibilityLabel(AppInfo.name)
     }
 
+    // MARK: App style
+
+    /// Menu bar style: a popover under the menu bar icon, no Dock icon.
+    /// Window style: a normal window and a Dock icon; the menu bar icon stays too.
+    private func applyStyle(showWindow: Bool) {
+        switch style {
+        case .menuBar:
+            window?.contentViewController = nil
+            window?.orderOut(nil)
+            popover.contentViewController = host
+            NSApp.setActivationPolicy(.accessory)
+        case .window:
+            if popover.isShown { popover.performClose(nil) }
+            popover.contentViewController = nil
+            NSApp.setActivationPolicy(.regular)
+            let window = self.window ?? makeWindow()
+            window.contentViewController = host
+            if showWindow { self.showWindow() }
+        }
+    }
+
+    private func makeWindow() -> NSWindow {
+        let window = NSWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.title = AppInfo.name
+        // The panel already shows the name; keep the title bar clean.
+        window.titleVisibility = .hidden
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.setFrameAutosaveName("MainWindow")
+        if !window.setFrameUsingName("MainWindow") { window.center() }
+        self.window = window
+        return window
+    }
+
+    private func showWindow() {
+        guard let window else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        refreshTeam()
+    }
+
+    /// Someone is calling me: bring the panel up so the ring is right there.
+    private func showForRing() {
+        switch style {
+        case .menuBar:
+            showPopover()
+        case .window:
+            // Front without stealing focus; the Dock icon bounces until I come to the app.
+            window?.orderFrontRegardless()
+            NSApp.requestUserAttention(.criticalRequest)
+        }
+    }
+
+    /// Clicking the Dock icon brings the window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if style == .window { showWindow() }
+        return true
+    }
+
+    private func refreshTeam() {
+        // Refresh the list each time the panel opens (new or removed teammates).
+        if team.phase == .inTeam {
+            Task { await team.reloadTeam() }
+        }
+    }
+
     @objc private func togglePopover() {
+        if style == .window { return showWindow() }
         if popover.isShown {
             popover.performClose(nil)
         } else {
@@ -103,16 +185,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func showPopover() {
-        guard let button = statusItem.button, !popover.isShown else { return }
+        guard style == .menuBar, let button = statusItem.button, !popover.isShown else { return }
         // Activate first so text fields in the popover can take keyboard focus.
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         watchForOutsideClicks()
-        // Refresh the list each time the panel opens (new or removed teammates).
-        if team.phase == .inTeam {
-            Task { await team.reloadTeam() }
-        }
+        refreshTeam()
     }
 
     /// `.transient` alone misses clicks in other apps when ours isn't the active app,
@@ -135,5 +214,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationDidResignActive(_ notification: Notification) {
         if popover.isShown { popover.performClose(nil) }
+    }
+}
+
+extension AppDelegate: NSWindowDelegate {
+    /// Closing the window hides it; the app keeps running so calls still ring.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
+}
+
+/// How the app shows itself, chosen in Settings → App Style.
+enum AppStyle: String, CaseIterable {
+    case menuBar, window
+
+    static let key = "appStyle"
+
+    static var current: AppStyle {
+        UserDefaults.standard.string(forKey: key).flatMap(AppStyle.init(rawValue:)) ?? .menuBar
+    }
+
+    var title: String {
+        switch self {
+        case .menuBar: "Menu Bar"
+        case .window: "Window and Dock"
+        }
     }
 }
